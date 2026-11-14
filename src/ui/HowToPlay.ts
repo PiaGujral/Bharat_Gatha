@@ -112,7 +112,7 @@ function pages(): Page[] {
       build: (body) => {
         const list = el('div', 'htp-steps');
         list.append(
-          stepCard(1, 'Explore', 'Walk, run and ride chariots across the island. Every region has its own look, its own sounds and its own music.'),
+          stepCard(1, 'Explore', 'Walk, run and ride chariots and horses across the island. Click anywhere on the map to pin a place and the cyan marker will lead you to it. Every region has its own look, its own sounds and its own music.'),
           stepCard(2, 'Scan monuments', 'Hold the right mouse button while looking at a monument. The Pramana lens scans it and adds a codex entry that explains how we know what we know about it.', keys('Right mouse (hold)')),
           stepCard(3, 'Talk to people', 'Walk up to someone and press E. People with a gold ★ nameplate carry the chapter’s story.', keys('E')),
           stepCard(4, 'Play the challenges', 'Glowing posts start short games: building, trading, archery, reading scripts, sorting events in order and more. They teach by doing.'),
@@ -148,8 +148,9 @@ function pages(): Page[] {
               ['Shoot an arrow (bow in hand)', keys('Left click')],
               ['Strike close up', keys('Q')],
               ['Scan a monument', keys('Right mouse (hold)')],
-              ['Get on or off a chariot', keys('R')],
-              ['Drive a chariot', keys('W', 'S', 'A', 'D')],
+              ['Get on or off a chariot or a horse', keys('R')],
+              ['Drive a chariot, ride a horse', keys('W', 'S', 'A', 'D')],
+              ['Drop a pin: open the map, click open ground', keys('M')],
               ['Answer a question', keys('1', '2', '3', '4')],
               ['Continue or skip a line of speech', keys('Enter')],
               ['Take a photograph and make a postcard', keys('P')],

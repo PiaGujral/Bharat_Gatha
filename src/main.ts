@@ -20,7 +20,7 @@ import { Rng } from './core/Rng';
 import { World } from './world/World';
 import { Kit } from './world/architecture/kit';
 import { stoneMaterial, shade } from './world/Materials';
-import { WORLD_HALF } from './world/Terrain';
+import { SEA_LEVEL, WORLD_HALF } from './world/Terrain';
 
 import { PlayerController } from './player/PlayerController';
 
@@ -133,6 +133,9 @@ class Game {
   private statsTimer = 0;
   private lastTier: 'full' | 'lite' | 'off' = 'full';
   private waypoint!: Waypoint;
+  /** The player's own map pin, and the cyan marker that points at it. */
+  private pinMarker!: Waypoint;
+  private pin: THREE.Vector3 | null = null;
   private guideAction: NextAction | null = null;
   private guideTimer = 0;
   private guideDistance: number | null = null;
@@ -177,6 +180,9 @@ class Game {
     this.hud = new Hud();
     this.waypoint = new Waypoint(document.getElementById('hud') ?? document.body);
     this.waypoint.setEnabled(save.settings.guide);
+    // A second marker, always on: the "next step" guide can be switched off,
+    // but a pin you dropped yourself should never quietly stop showing.
+    this.pinMarker = new Waypoint(document.getElementById('hud') ?? document.body, 'pin');
     this.coach = new Coach(document.getElementById('hud') ?? document.body);
     // The optional class connection: every save may be sent to the teacher's server, and the class's own
     // questions join the quiz. None of it is needed to play.
@@ -205,6 +211,8 @@ class Game {
       travel: (zoneId) => this.travelTo(zoneId),
       seal: (zoneId) => void this.runSeal(zoneId),
       gatha: () => this.scrollModal.present(),
+      pin: () => (this.pin ? { x: this.pin.x, z: this.pin.z } : null),
+      setPin: (p) => this.setPin(p),
     });
 
     this.scrollModal = new ScrollModal(this.story, {
@@ -553,6 +561,7 @@ class Game {
     this.camera.getWorldDirection(_look);
     audio.listen(this.camera.position.x, this.camera.position.y, this.camera.position.z, _look.x, _look.y, _look.z);
     this.updateGuide(dt, blocked);
+    this.updatePin(blocked);
     {
       const flying = this.player.state !== 'ground' && this.player.state !== 'climb' && this.player.state !== 'swim';
       this.combat.update(dt, this.elapsed, this.player.position, blocked || this.dialogue.isOpen || flying);
@@ -1169,6 +1178,60 @@ class Game {
   }
 
   /** Per frame: place the marker and keep the Next step card honest. */
+  /**
+   * Drop, move or clear the player's own map pin. The point arrives as flat
+   * world coordinates from the map, so the height comes from the terrain —
+   * a pin floating over a valley would point you at the sky.
+   */
+  private setPin(point: { x: number; z: number } | null): void {
+    if (!point) {
+      if (!this.pin) return;
+      this.pin = null;
+      this.pinMarker.set(null);
+      this.showPinKey(false);
+      this.hud.toast('info', 'Pin cleared', 'The cyan marker is gone.', '📍', 2200);
+      return;
+    }
+    const y = this.world.terrain.heightAt(point.x, point.z);
+    this.pin = new THREE.Vector3(point.x, Math.max(y, SEA_LEVEL) + 6, point.z);
+    const d = Math.hypot(point.x - this.player.position.x, point.z - this.player.position.z);
+    this.hud.toast(
+      'info',
+      'Pin dropped',
+      `${d >= 1000 ? `${(d / 1000).toFixed(1)} km` : `${Math.round(d)} m`} away. Follow the cyan marker — a chariot or a horse will get you there faster.`,
+      '📍',
+      5200,
+    );
+    this.showPinKey(true);
+    audio.pluck(392, 0.2);
+  }
+
+  /** The minimap's key only mentions the pin while there is one. */
+  private showPinKey(on: boolean): void {
+    const dot = document.querySelector('.mm-key [data-k="pin"]');
+    const row = dot?.parentElement;
+    if (row) row.hidden = !on;
+  }
+
+  /** Keep the pin's marker on screen, and retire the pin once you arrive. */
+  private updatePin(blocked: boolean): void {
+    if (!this.pin) return;
+    const arrived = Math.hypot(this.pin.x - this.player.position.x, this.pin.z - this.player.position.z) < 9;
+    if (arrived && this.player.state === 'ground') {
+      this.pin = null;
+      this.pinMarker.set(null);
+      this.showPinKey(false);
+      this.hud.toast('info', 'Arrived', 'You reached your pin.', '📍', 2600);
+      audio.pluck(523, 0.22);
+      return;
+    }
+    this.pinMarker.set({ position: this.pin, label: 'Your pin' });
+    this.pinMarker.setVisible(!blocked && !this.dialogue.isOpen);
+    const w = this.viewport.clientWidth || window.innerWidth;
+    const h = this.viewport.clientHeight || window.innerHeight;
+    this.pinMarker.update(this.camera, w, h, this.player.position);
+  }
+
   private updateGuide(dt: number, blocked: boolean): void {
     const flying = this.player.state === 'vimana' || this.player.state === 'freefall' || this.player.state === 'glide';
     // The first time the player touches ground after the flight, the coach offers to show them around.
@@ -1301,6 +1364,7 @@ class Game {
       kind: 'chariot' as const,
       yaw: c.yaw,
     }));
+    if (this.pin) dynamic.push({ x: this.pin.x, z: this.pin.z, kind: 'pin' });
     this.minimap.update(this.player.position.x, this.player.position.z, this.player.yaw, dynamic);
   }
 
@@ -1788,10 +1852,10 @@ const CONTROLS: Array<[string, string[]]> = [
   ['Crouch', ['Ctrl']],
   ['Jump / drop / open canopy', ['Space']],
   ['Interact', ['E']],
-  ['Mount / leave a chariot', ['R']],
+  ['Mount / leave a chariot or horse', ['R']],
   ['Switch camera', ['V']],
   ['Scan a monument', ['Right mouse']],
-  ['Map and fast travel', ['M']],
+  ['Map, pins and fast travel', ['M']],
   ['Codex', ['J']],
   ['The Gatha — panels, plaques, the story', ['K']],
   ['Photograph and postcard', ['P']],

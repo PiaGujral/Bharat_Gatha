@@ -29,11 +29,15 @@ export interface JourneyDeps {
   travel(zoneId: string): void;
   seal(zoneId: string): void;
   gatha(): void;
+  /** The player's own map pin, in world coordinates. */
+  pin(): { x: number; z: number } | null;
+  setPin(point: { x: number; z: number } | null): void;
 }
 
 export type JourneyTab = 'map' | 'roadmap' | 'guide';
 
 const MAP = 640;
+const PIN_COLOUR = '#6fe3ff';
 
 const STATE_COLOUR: Record<JourneyState, string> = {
   unvisited: '#7d8190',
@@ -156,8 +160,15 @@ export class JourneyScreen {
     const trav = el('span');
     trav.append(el('i', 'tri'), 'Landing terrace');
     legend.appendChild(trav);
+    const pinned = el('span');
+    const pinDot = el('i');
+    pinDot.style.background = PIN_COLOUR;
+    pinned.append(pinDot, 'Your pin');
+    legend.appendChild(pinned);
+    const how = el('p', 'jr-maphint');
+    how.textContent = 'Click a region for its detail · click open ground to drop a pin and head for it · right-click to clear the pin';
     stage.append(canvas, tip);
-    stage.append(legend);
+    stage.append(legend, how);
 
     const side = el('aside', 'jr-side');
     layout.append(stage, side);
@@ -173,6 +184,9 @@ export class JourneyScreen {
     const px = (x: number): number => ((x + WORLD_HALF) / WORLD_SIZE) * MAP;
     const py = (z: number): number => ((z + WORLD_HALF) / WORLD_SIZE) * MAP;
     const discR = (z: Zone): number => (z.radius / WORLD_SIZE) * MAP * 0.5;
+    // ...and back again, for turning a click into a place.
+    const wx = (cx: number): number => (cx / MAP) * WORLD_SIZE - WORLD_HALF;
+    const wz = (cy: number): number => (cy / MAP) * WORLD_SIZE - WORLD_HALF;
 
     const zoneAtPoint = (cx: number, cy: number): string | null => {
       let best: string | null = null;
@@ -216,12 +230,24 @@ export class JourneyScreen {
     });
     canvas.addEventListener('click', (e) => {
       const p = logical(e);
-      const id = zoneAtPoint(p.x, p.y);
+      // Shift forces a pin, for when the spot you want is under a region disc.
+      const id = e.shiftKey ? null : zoneAtPoint(p.x, p.y);
       audio.click();
       if (id) {
         sel = id;
         select(id);
+        return;
       }
+      // Open ground: drop a pin and get out of the way, because the only
+      // reason to pin a place is to start going there.
+      this.deps.setPin({ x: wx(p.x), z: wz(p.y) });
+      close();
+    });
+    canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (!this.deps.pin()) return;
+      audio.click();
+      this.deps.setPin(null);
     });
 
     // --- drawing
@@ -256,6 +282,7 @@ export class JourneyScreen {
       drawRoute(t);
       for (const z of ZONES) drawZone(z, t);
       for (const pad of pads) drawPad(pad);
+      drawPin(t);
       drawPlayer(t);
       drawCompass();
     };
@@ -405,6 +432,39 @@ export class JourneyScreen {
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
+      ctx.restore();
+    };
+
+    const drawPin = (t: number): void => {
+      const p = this.deps.pin();
+      if (!p) return;
+      const x = px(p.x);
+      const y = py(p.z);
+      ctx.save();
+      const pulse = (Math.sin(t * 0.005) + 1) / 2;
+      ctx.strokeStyle = `rgba(111,227,255,${0.55 - pulse * 0.4})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y - 4, 10 + pulse * 9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = PIN_COLOUR;
+      ctx.strokeStyle = '#10222b';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(x, y + 2);
+      ctx.lineTo(x - 5, y - 7);
+      ctx.lineTo(x + 5, y - 7);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, y - 10, 6.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#10222b';
+      ctx.beginPath();
+      ctx.arc(x, y - 10, 2.6, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     };
 

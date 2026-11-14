@@ -751,6 +751,11 @@ body.cinematic .cinema-bars i {
 .mm-key i[data-k='chariot'] {
   background: #e8713a;
 }
+.mm-key i[data-k='pin'] {
+  border-radius: 50%;
+  rotate: none;
+  background: #6fe3ff;
+}
 
 @media (max-height: 620px) {
   .mm-key {
@@ -4757,6 +4762,15 @@ body.high-contrast .screen-fx {
   border-bottom: 10px solid var(--gold-bright);
 }
 
+/* how to use the map, under the legend */
+.jr-maphint {
+  margin: 0.4rem 0 0;
+  color: var(--parchment-dim);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  opacity: 0.85;
+}
+
 .jr-side {
   display: grid;
   gap: 0.9rem;
@@ -5758,6 +5772,31 @@ body.high-contrast .screen-fx {
 /* at the edge of the screen the words sit inward of the diamond */
 .wp-marker.edge .wp-text {
   top: 22px;
+}
+
+/* A dropped pin: the same marker in cyan, so it never gets confused with the
+   gold "next step" diamond when both are on screen at once. */
+.waypoint-pin .wp-diamond {
+  rotate: 0deg;
+  border-radius: 50%;
+  border-color: #d8f7ff;
+  background: radial-gradient(circle at 36% 32%, #bff2ff, #2aa8cc 62%, #1b7d9c);
+  box-shadow:
+    0 0 0 3px rgb(11 10 16 / 0.55),
+    0 0 18px 4px rgb(80 220 255 / 0.65);
+}
+
+.waypoint-pin .wp-text {
+  border-color: rgb(111 227 255 / 0.5);
+}
+
+.waypoint-pin .wp-dist {
+  color: #8fe6ff;
+}
+
+.waypoint-pin .wp-arrow::before {
+  border-bottom-color: #6fe3ff;
+  filter: drop-shadow(0 0 5px rgb(80 220 255 / 0.85));
 }
 
 .op-next {

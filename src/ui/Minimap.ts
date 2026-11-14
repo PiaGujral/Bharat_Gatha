@@ -15,7 +15,7 @@ import { mixColor, shade } from '../world/Materials';
  * where things actually are, and this is a game about where things are.
  */
 
-export type MarkerKind = 'landmark' | 'challenge' | 'npc' | 'chariot' | 'pad' | 'player';
+export type MarkerKind = 'landmark' | 'challenge' | 'npc' | 'chariot' | 'pad' | 'player' | 'pin';
 
 export interface MinimapMarker {
   x: number;
@@ -41,6 +41,7 @@ const COLORS: Record<MarkerKind, string> = {
   chariot: '#e8713a',
   pad: '#9fb6ff',
   player: '#ffffff',
+  pin: '#6fe3ff',
 };
 
 export class Minimap {
@@ -142,9 +143,20 @@ export class Minimap {
     // Markers.
     const all = [...this.statics, ...dynamic];
     for (const m of all) {
-      const mx = r + (m.x - px) * scale;
-      const my = r + (m.z - pz) * scale;
-      if (mx < -8 || mx > size + 8 || my < -8 || my > size + 8) continue;
+      let mx = r + (m.x - px) * scale;
+      let my = r + (m.z - pz) * scale;
+      if (m.kind === 'pin') {
+        // A dropped pin never leaves the map. Past the rim it slides onto it,
+        // so which way to walk is always readable, however far away it is.
+        const dx = mx - r;
+        const dy = my - r;
+        const d = Math.hypot(dx, dy);
+        const lim = r - 8;
+        if (d > lim && d > 1e-3) {
+          mx = r + (dx / d) * lim;
+          my = r + (dy / d) * lim;
+        }
+      } else if (mx < -8 || mx > size + 8 || my < -8 || my > size + 8) continue;
       this.drawMarker(ctx, mx, my, m);
     }
 
@@ -244,6 +256,27 @@ export class Minimap {
         ctx.fill();
         ctx.stroke();
         ctx.restore();
+        break;
+      }
+      case 'pin': {
+        // A map pin: round head on a spike, so it never reads as a landmark.
+        ctx.beginPath();
+        ctx.moveTo(x, y + 6.2);
+        ctx.lineTo(x - 3, y + 0.5);
+        ctx.lineTo(x + 3, y + 0.5);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x, y - 2, 4.2, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x, y - 2, 1.6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(14,12,22,0.9)';
+        ctx.fill();
         break;
       }
       case 'pad': {

@@ -31,8 +31,8 @@ export class Waypoint {
   private lastDistance = '';
   private readonly v = new THREE.Vector3();
 
-  constructor(parent: HTMLElement) {
-    this.root.className = 'waypoint';
+  constructor(parent: HTMLElement, variant: 'quest' | 'pin' = 'quest') {
+    this.root.className = variant === 'pin' ? 'waypoint waypoint-pin' : 'waypoint';
     this.root.setAttribute('aria-hidden', 'true');
     this.marker.className = 'wp-marker';
     const diamond = document.createElement('b');
