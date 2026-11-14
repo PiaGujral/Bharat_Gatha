@@ -79,6 +79,19 @@ const WANDER: Partial<Record<Style, { radius: number; speed: number }>> = {
   // Dancers and worshippers are where they are on purpose.
 };
 
+/**
+ * How far this person strays from their post, in metres; 0 means they stay put.
+ *
+ * The world uses this to decide who gets a collider. A collider here is a box
+ * in a static hash — it cannot be moved or removed — so anyone who walks must
+ * not have one, or they leave an invisible wall standing where they used to be.
+ * Reading it from the same table that drives the walking is the point: the two
+ * cannot drift apart.
+ */
+export function wanderRadiusFor(spec: Pick<NpcSpec, 'role' | 'name'>): number {
+  return WANDER[styleFor(spec)]?.radius ?? 0;
+}
+
 const SKIN = 0x8a5f3c;
 
 interface Rig {

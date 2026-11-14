@@ -13,7 +13,7 @@ import { masonryMaterial, stoneMaterial, glowMaterial, shade, shaderTime } from 
 import { Rng } from '../core/Rng';
 import { Chariot, type VehicleKind } from '../vehicles/Chariot';
 import { Atmosphere } from './Atmosphere';
-import { NpcActor, type ActorEnv } from './NpcActor';
+import { NpcActor, wanderRadiusFor, type ActorEnv } from './NpcActor';
 import { ZONES, zoneAt, worldPos } from '../content/zones';
 import type { Landmark, Zone, ChallengeSpec, NpcSpec } from '../content/types';
 import type { Plaque } from '../content/story';
@@ -442,9 +442,12 @@ export class World {
     mesh.castShadow = true;
     this.group.add(mesh);
 
-    // People who stay at their post are solid. Walkers are not: a wall that does not move cannot follow them.
-    const stays = !WALKERS.test(`${npc.role} ${npc.name}`);
-    if (stays) this.collision.add(ground.x - 0.4, ground.y, ground.z - 0.4, ground.x + 0.4, ground.y + 1.8, ground.z + 0.4, `npc:${npc.id}`);
+    // People who stay at their post are solid. Anyone who walks is not: the
+    // collision hash is static, so a collider on a walker is an invisible wall
+    // left standing wherever they started.
+    if (wanderRadiusFor(npc) === 0) {
+      this.collision.add(ground.x - 0.4, ground.y, ground.z - 0.4, ground.x + 0.4, ground.y + 1.8, ground.z + 0.4, `npc:${npc.id}`);
+    }
 
     const glow = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.05, 6, 18), glowMaterial(0x7fd4c8, 0.55));
     glow.rotation.x = Math.PI / 2;
@@ -896,9 +899,6 @@ export class World {
 const _v1 = new THREE.Vector3();
 
 /** A low-poly standing person: robe, torso, head, arms. */
-/** Roles that wander rather than stand at a post. Kept in step with the wander table in NpcActor. */
-const WALKERS = /child|water.?carrier/i;
-
 export function buildPerson(color: number, rng: Rng): THREE.BufferGeometry {
   const kit = new Kit();
   const skin = 0x8a5f3c;
