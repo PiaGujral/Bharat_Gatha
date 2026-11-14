@@ -563,6 +563,7 @@ class Game {
     audio.listen(this.camera.position.x, this.camera.position.y, this.camera.position.z, _look.x, _look.y, _look.z);
     this.updateGuide(dt, blocked);
     this.updatePin(blocked);
+    this.updateScoreIntensity();
     {
       const flying = this.player.state !== 'ground' && this.player.state !== 'climb' && this.player.state !== 'swim';
       this.combat.update(dt, this.elapsed, this.player.position, blocked || this.dialogue.isOpen || flying);
@@ -1215,6 +1216,22 @@ class Game {
     const dot = document.querySelector('.mm-key [data-k="pin"]');
     const row = dot?.parentElement;
     if (row) row.hidden = !on;
+  }
+
+  /**
+   * Tell the score how much the moment is asking of it.
+   *
+   * Shades closing in is the loudest thing that can happen to you, so it wins.
+   * Below that, a gallop carries its own momentum and the music keeps pace
+   * with it. Standing still in a field asks for nothing, and the conductor
+   * takes its time letting go, so this never flickers.
+   */
+  private updateScoreIntensity(): void {
+    let want = 0;
+    if (this.combat.engaged) want = 1;
+    else if (this.ridingChariot) want = Math.min(0.62, Math.abs(this.ridingChariot.speed) / 24);
+    else if (this.player.state === 'vimana' || this.player.state === 'glide') want = 0.45;
+    audio.setMusicIntensity(want);
   }
 
   /** Keep the pin's marker on screen, and retire the pin once you arrive. */
