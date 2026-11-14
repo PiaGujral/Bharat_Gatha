@@ -11,7 +11,7 @@ import { stoneMaterial, shade } from '../world/Materials';
  * files, and it costs seven draw calls.
  */
 
-export type AvatarPose = 'idle' | 'walk' | 'run' | 'jump' | 'fall' | 'glide' | 'swim' | 'ride' | 'climb';
+export type AvatarPose = 'idle' | 'walk' | 'run' | 'jump' | 'fall' | 'glide' | 'swim' | 'ride' | 'horse' | 'climb';
 
 const SKIN = 0x9a6b42;
 const CLOTH = 0xe8863a;
@@ -211,6 +211,19 @@ export class PlayerAvatar {
         this.legL.rotation.x = -0.55 - swing * 0.5;
         this.legR.rotation.x = -0.55 + swing * 0.5;
         this.bend = lerp(this.bend, 0.08, dt * 6);
+        break;
+      case 'horse':
+        // Astride: thighs out and forward over the barrel, hands low on the
+        // reins rather than up on a rail.
+        this.legL.rotation.x = -0.5;
+        this.legR.rotation.x = -0.5;
+        this.legL.rotation.z = -0.42;
+        this.legR.rotation.z = 0.42;
+        this.armL.rotation.x = -0.85;
+        this.armR.rotation.x = -0.85;
+        this.armL.rotation.z = 0.2;
+        this.armR.rotation.z = -0.2;
+        this.bend = lerp(this.bend, 0.16, dt * 6);
         break;
       case 'ride':
         // Standing in a chariot: knees soft, one hand forward on the rail.

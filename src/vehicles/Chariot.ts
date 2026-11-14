@@ -18,13 +18,9 @@ import { audio } from '../core/Audio';
  * that is accurately simulated.
  */
 
-const MAX_SPEED = 21;
 const REVERSE_SPEED = 7;
-const ACCEL = 15;
 const BRAKE = 30;
 const DRAG = 2.4;
-const TURN_RATE = 1.45;
-const BODY_RADIUS = 2.0;
 const WHEEL_RADIUS = 1.05;
 const WATER_DRAG = 0.22;
 /**
@@ -33,7 +29,19 @@ const WATER_DRAG = 0.22;
  */
 const SCALE = 0.75;
 /** Height of the deck above the ground, in world units. */
-export const CHARIOT_DECK_HEIGHT = 1.34 * SCALE + 0.1;
+/**
+ * What you are riding. Both use the same physics; a horse simply turns harder,
+ * accelerates faster and has no cart behind it.
+ */
+export type VehicleKind = 'chariot' | 'horse';
+
+const TUNING: Record<VehicleKind, { maxSpeed: number; accel: number; turn: number; radius: number; deck: number }> = {
+  // `radius` is the collision radius in world units, already past the group
+  // scale; `deck` is how high the rider's feet sit above the vehicle origin.
+  chariot: { maxSpeed: 21, accel: 15, turn: 1.45, radius: 2.0 * SCALE, deck: 1.34 * SCALE + 0.1 },
+  // A horse is nimbler and narrower, and you sit lower than you stand in a cart.
+  horse: { maxSpeed: 24, accel: 22, turn: 2.1, radius: 1.0, deck: 0.98 },
+};
 
 export interface ChariotInput {
   throttle: number; // -1 .. 1
@@ -44,6 +52,7 @@ export interface ChariotInput {
 export class Chariot {
   readonly id: string;
   readonly zoneId: string;
+  readonly kind: VehicleKind;
   readonly group = new THREE.Group();
   readonly position = new THREE.Vector3();
   /** Where the rider stands, updated every frame. */
@@ -55,14 +64,18 @@ export class Chariot {
 
   private readonly terrain: Terrain;
   private readonly collision: CollisionWorld;
-  private readonly wheelL: THREE.Mesh;
-  private readonly wheelR: THREE.Mesh;
+  private readonly tune: (typeof TUNING)[VehicleKind];
+  /** Null on a horse, which has no cart under it. */
+  private readonly wheelL: THREE.Mesh | null;
+  private readonly wheelR: THREE.Mesh | null;
+  /** The animal: a pair in harness on a chariot, the mount itself on a horse. */
   private readonly horses: THREE.Group;
   private wheelSpin = 0;
   private gallop = 0;
   private hoofAccumulator = 0;
   private bodyPitch = 0;
   private bodyRoll = 0;
+  private bob = 0;
 
   constructor(
     id: string,
@@ -74,32 +87,47 @@ export class Chariot {
     collision: CollisionWorld,
     stone: number,
     rng: Rng,
+    kind: VehicleKind = 'chariot',
   ) {
     this.id = id;
     this.zoneId = zoneId;
+    this.kind = kind;
     this.terrain = terrain;
     this.collision = collision;
     this.yaw = yaw;
 
-    const parts = buildChariotParts(stone, rng);
-
-    const body = new THREE.Mesh(parts.body, stoneMaterial());
-    body.castShadow = true;
-    this.group.add(body);
-
-    this.wheelL = new THREE.Mesh(parts.wheel, stoneMaterial());
-    this.wheelR = new THREE.Mesh(parts.wheel, stoneMaterial());
-    this.wheelL.position.set(-1.6, WHEEL_RADIUS, 0);
-    this.wheelR.position.set(1.6, WHEEL_RADIUS, 0);
-    this.wheelL.castShadow = true;
-    this.wheelR.castShadow = true;
-    this.group.add(this.wheelL, this.wheelR);
-
+    this.tune = TUNING[kind];
     this.horses = new THREE.Group();
-    const horseMesh = new THREE.Mesh(parts.horses, stoneMaterial());
-    horseMesh.castShadow = true;
-    this.horses.add(horseMesh);
-    this.horses.position.set(0, 0, 5.6);
+
+    if (kind === 'horse') {
+      // No cart, no wheels, no yoke — just the saddled animal, standing where
+      // the chariot's car would be so the rider lands on its back.
+      this.wheelL = null;
+      this.wheelR = null;
+      const mount = new THREE.Mesh(buildSaddleHorse(rng), stoneMaterial());
+      mount.castShadow = true;
+      this.horses.add(mount);
+    } else {
+      const parts = buildChariotParts(stone, rng);
+
+      const body = new THREE.Mesh(parts.body, stoneMaterial());
+      body.castShadow = true;
+      this.group.add(body);
+
+      this.wheelL = new THREE.Mesh(parts.wheel, stoneMaterial());
+      this.wheelR = new THREE.Mesh(parts.wheel, stoneMaterial());
+      this.wheelL.position.set(-1.6, WHEEL_RADIUS, 0);
+      this.wheelR.position.set(1.6, WHEEL_RADIUS, 0);
+      this.wheelL.castShadow = true;
+      this.wheelR.castShadow = true;
+      this.group.add(this.wheelL, this.wheelR);
+
+      const horseMesh = new THREE.Mesh(parts.horses, stoneMaterial());
+      horseMesh.castShadow = true;
+      this.horses.add(horseMesh);
+      // Out in front, at the end of the pole.
+      this.horses.position.set(0, 0, 5.6);
+    }
     this.group.add(this.horses);
 
     this.group.scale.setScalar(SCALE);
@@ -120,6 +148,21 @@ export class Chariot {
   /** Forward unit vector, matching the player's yaw convention. */
   forward(out = new THREE.Vector3()): THREE.Vector3 {
     return out.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+  }
+
+  /**
+   * How high above the vehicle's origin the rider's feet sit. A getter rather
+   * than a constant because a horse's back rises and falls with the gallop, and
+   * a rider pinned to a fixed height while the animal moves under them reads as
+   * a bug.
+   */
+  get deckHeight(): number {
+    return this.tune.deck + (this.kind === 'horse' ? this.bob * SCALE : 0);
+  }
+
+  /** What the HUD should call this thing. */
+  get label(): string {
+    return this.kind === 'horse' ? 'horse' : 'chariot';
   }
 
   mount(): void {
@@ -145,10 +188,11 @@ export class Chariot {
       if (input.handbrake) {
         this.speed = approach(this.speed, 0, BRAKE * 1.6 * dt);
       } else if (input.throttle > 0) {
-        this.speed = approach(this.speed, MAX_SPEED * input.throttle, ACCEL * dt);
+        this.speed = approach(this.speed, this.tune.maxSpeed * input.throttle, this.tune.accel * dt);
       } else if (input.throttle < 0) {
         // Brake first, then reverse.
-        this.speed = this.speed > 0.5 ? approach(this.speed, 0, BRAKE * dt) : approach(this.speed, -REVERSE_SPEED, ACCEL * 0.6 * dt);
+        this.speed =
+          this.speed > 0.5 ? approach(this.speed, 0, BRAKE * dt) : approach(this.speed, -REVERSE_SPEED, this.tune.accel * 0.6 * dt);
       } else {
         this.speed = approach(this.speed, 0, DRAG * dt);
       }
@@ -156,7 +200,7 @@ export class Chariot {
       // Steering authority grows with speed, so it cannot spin on the spot.
       const grip = Math.min(1, Math.abs(this.speed) / 7);
       const direction = this.speed >= 0 ? 1 : -1;
-      this.yaw -= input.steer * TURN_RATE * grip * direction * dt;
+      this.yaw -= input.steer * this.tune.turn * grip * direction * dt;
     } else {
       this.speed = approach(this.speed, 0, DRAG * 2 * dt);
     }
@@ -172,7 +216,7 @@ export class Chariot {
       // actually survived. Grazing a wall and sliding along it should cost
       // almost nothing; driving straight into one should stop you. Penalising
       // every frame of contact equally is what makes vehicles stick to walls.
-      const r = this.collision.resolve(nx, this.position.y, nz, BODY_RADIUS * SCALE, 2.2, 0.9);
+      const r = this.collision.resolve(nx, this.position.y, nz, this.tune.radius, 2.2, 0.9);
       if (r.blocked) {
         const intended = this.speed * dt;
         const achieved = (r.x - this.position.x) * fwd.x + (r.z - this.position.z) * fwd.z;
@@ -220,12 +264,16 @@ export class Chariot {
     this.group.rotation.x = this.bodyPitch;
     this.group.rotation.z = -this.bodyRoll;
 
-    this.wheelL.rotation.x = this.wheelSpin;
-    this.wheelR.rotation.x = this.wheelSpin;
-    // Horses rise and fall with the gallop, and lean into the pull.
-    const bob = Math.abs(this.speed) > 0.5 ? Math.abs(Math.sin(this.gallop)) * 0.28 : 0;
-    this.horses.position.y = bob;
-    this.horses.rotation.x = -bob * 0.25;
+    if (this.wheelL && this.wheelR) {
+      this.wheelL.rotation.x = this.wheelSpin;
+      this.wheelR.rotation.x = this.wheelSpin;
+    }
+    // Horses rise and fall with the gallop, and lean into the pull. A ridden
+    // horse bobs less, because the rider goes up and down with it.
+    const height = this.kind === 'horse' ? 0.16 : 0.28;
+    this.bob = Math.abs(this.speed) > 0.5 ? Math.abs(Math.sin(this.gallop)) * height : 0;
+    this.horses.position.y = this.bob;
+    this.horses.rotation.x = -this.bob * 0.25;
 
     this.updateRider();
   }
@@ -314,6 +362,65 @@ function buildChariotParts(stone: number, rng: Rng): {
   }
 
   return { body: b.build().geometry, wheel: w.build().geometry, horses: h.build().geometry };
+}
+
+/**
+ * A single saddled horse, built facing local +Z like the chariot so the same
+ * half turn in `update` points it the way it is going.
+ *
+ * Proportions are a real riding horse divided by SCALE, because at this size
+ * the eye notices: withers 1.55 m, barrel 0.72 m deep, legs 0.83 m. The pair in
+ * harness on a chariot are deliberately heavier — draught animals, not these.
+ */
+function buildSaddleHorse(rng: Rng): THREE.BufferGeometry {
+  const h = new Kit();
+  const coat = shade(rng.pick([0x6b513a, 0x8a6b4a, 0x3f3530, 0x9c8469, 0x4a3b30]), rng.range(0.92, 1.08));
+  const dark = shade(coat, 0.8);
+  const HAIR = 0x2e2219;
+  const LEATHER = 0x4a3524;
+
+  const LEG = 1.11; // local; 0.83 m once the group is scaled
+  const BACK = 2.07; // top of the barrel
+
+  // Barrel, sitting straight on the legs.
+  h.box([0.84, BACK - LEG, 2.5], [0, (BACK + LEG) / 2, 0], coat, { collide: false });
+  // A slightly deeper chest at the front, so it is not a plain slab.
+  h.box([0.78, 0.8, 0.5], [0, 1.68, 1.15], coat, { collide: false });
+
+  // Neck rising forward out of the shoulder, then the head on the end of it.
+  h.box([0.58, 1.05, 0.72], [0, 2.38, 1.3], coat, { rotX: -0.4, collide: false });
+  h.box([0.4, 0.42, 0.92], [0, 2.56, 2.02], coat, { rotX: -0.14, collide: false });
+  h.box([0.42, 0.12, 0.12], [0, 2.46, 2.42], dark, { collide: false }); // noseband
+  for (const side of [-1, 1]) h.box([0.09, 0.24, 0.1], [side * 0.14, 2.84, 1.82], dark, { collide: false });
+
+  // Mane down the crest, and a tail.
+  h.box([0.1, 0.5, 1.0], [0, 2.86, 1.24], HAIR, { rotX: -0.4, collide: false });
+  h.box([0.13, 0.85, 0.28], [0, 1.9, -1.34], HAIR, { rotX: 0.45, collide: false });
+
+  // Legs, with a darker hoof at the bottom of each.
+  for (const [lx, lz] of [
+    [-0.3, -0.95],
+    [0.3, -0.95],
+    [-0.3, 0.95],
+    [0.3, 0.95],
+  ] as Array<[number, number]>) {
+    h.box([0.22, LEG, 0.24], [lx, LEG / 2, lz], dark, { collide: false });
+    h.box([0.26, 0.14, 0.28], [lx, 0.07, lz], shade(coat, 0.55), { collide: false });
+  }
+
+  // Tack: blanket, saddle with pommel and cantle, stirrups, and reins running
+  // from the bit back to where the rider's hands sit.
+  h.box([0.96, 0.1, 1.3], [0, BACK + 0.05, -0.1], 0x8e2f2f, { collide: false });
+  h.box([0.78, 0.22, 0.88], [0, BACK + 0.19, -0.05], 0x5a3a24, { collide: false });
+  h.box([0.24, 0.2, 0.16], [0, BACK + 0.37, 0.34], LEATHER, { collide: false });
+  h.box([0.26, 0.18, 0.14], [0, BACK + 0.36, -0.44], LEATHER, { collide: false });
+  for (const side of [-1, 1]) {
+    h.box([0.06, 0.58, 0.09], [side * 0.45, BACK - 0.22, -0.05], LEATHER, { collide: false });
+    h.box([0.16, 0.1, 0.2], [side * 0.45, BACK - 0.52, -0.05], 0x55504a, { collide: false });
+    h.box([0.06, 0.06, 1.5], [side * 0.2, 2.52, 1.62], LEATHER, { rotX: -0.3, collide: false });
+  }
+
+  return h.build().geometry;
 }
 
 function approach(current: number, target: number, maxDelta: number): number {

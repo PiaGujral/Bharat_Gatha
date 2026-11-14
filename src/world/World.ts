@@ -11,7 +11,7 @@ import { buildLandmark } from './architecture';
 import { Kit } from './architecture/kit';
 import { masonryMaterial, stoneMaterial, glowMaterial, shade, shaderTime } from './Materials';
 import { Rng } from '../core/Rng';
-import { Chariot } from '../vehicles/Chariot';
+import { Chariot, type VehicleKind } from '../vehicles/Chariot';
 import { Atmosphere } from './Atmosphere';
 import { NpcActor, type ActorEnv } from './NpcActor';
 import { ZONES, zoneAt, worldPos } from '../content/zones';
@@ -705,8 +705,9 @@ export class World {
     const PREFERRED = new Set(['vimanaPad', 'cityGate', 'bazaarStreet', 'villageCluster', 'harbour', 'hermitage']);
 
     for (const zone of ZONES) {
+      // Three per region rather than two, so one is usually within sight.
       const candidates = zone.landmarks.filter((l) => PREFERRED.has(l.kind));
-      const chosen = candidates.length >= 2 ? rng.sample(candidates, 2) : zone.landmarks.slice(0, 2);
+      const chosen = candidates.length >= 3 ? rng.sample(candidates, 3) : zone.landmarks.slice(0, 3);
 
       chosen.forEach((landmark, index) => {
         const placed = this.landmarks.find((l) => l.id === landmark.id);
@@ -714,24 +715,31 @@ export class World {
           ? { x: placed.position.x, z: placed.position.z, radius: placed.radius }
           : { x: zone.center[0], z: zone.center[1], radius: 20 };
 
-        // Stand off from the monument so the chariot is not inside it.
-        const angle = rng.range(0, Math.PI * 2);
-        const dist = base.radius + rng.range(10, 20);
-        const spot = this.terrain.findGround(base.x + Math.cos(angle) * dist, base.z + Math.sin(angle) * dist, 70);
+        // Stand off from the monument so nothing is parked inside it.
+        const park = (kind: VehicleKind, id: string) => {
+          const angle = rng.range(0, Math.PI * 2);
+          const dist = base.radius + rng.range(10, 20);
+          const spot = this.terrain.findGround(base.x + Math.cos(angle) * dist, base.z + Math.sin(angle) * dist, 70);
+          const vehicle = new Chariot(
+            id,
+            zone.id,
+            spot.x,
+            spot.z,
+            rng.range(0, Math.PI * 2),
+            this.terrain,
+            this.collision,
+            zone.palette.stone,
+            rng,
+            kind,
+          );
+          this.chariots.push(vehicle);
+          this.group.add(vehicle.group);
+        };
 
-        const chariot = new Chariot(
-          `${zone.id}-chariot-${index}`,
-          zone.id,
-          spot.x,
-          spot.z,
-          rng.range(0, Math.PI * 2),
-          this.terrain,
-          this.collision,
-          zone.palette.stone,
-          rng,
-        );
-        this.chariots.push(chariot);
-        this.group.add(chariot.group);
+        park('chariot', `${zone.id}-chariot-${index}`);
+        // Two of the three spots also get a saddled horse: faster off the mark
+        // than a cart, and it fits through gaps a chariot cannot turn into.
+        if (index < 2) park('horse', `${zone.id}-horse-${index}`);
       });
     }
   }

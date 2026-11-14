@@ -61,8 +61,22 @@ export function styleFor(spec: Pick<NpcSpec, 'role' | 'name'>): Style {
 
 /** How far a style wanders from its post, in metres, and how fast. */
 const WANDER: Partial<Record<Style, { radius: number; speed: number }>> = {
-  play: { radius: 4.2, speed: 2.5 },
-  carry: { radius: 4.5, speed: 1.0 },
+  // People with errands cover ground.
+  play: { radius: 9, speed: 2.5 },
+  carry: { radius: 16, speed: 1.3 },
+  guard: { radius: 14, speed: 1.2 },
+  speak: { radius: 9, speed: 0.95 },
+  idle: { radius: 8, speed: 0.85 },
+  dig: { radius: 7, speed: 0.7 },
+  row: { radius: 5, speed: 0.7 },
+  // Bench crafts stay at the bench — a potter who strolls off mid-throw reads
+  // as a bug, not as life. They shift their feet and no more.
+  stir: { radius: 2.6, speed: 0.6 },
+  knead: { radius: 1.6, speed: 0.5 },
+  weave: { radius: 1.5, speed: 0.5 },
+  hammer: { radius: 1.8, speed: 0.5 },
+  write: { radius: 1.4, speed: 0.45 },
+  // Dancers and worshippers are where they are on purpose.
 };
 
 const SKIN = 0x8a5f3c;

@@ -58,7 +58,7 @@ import { ZONES, TOTAL_NPCS, getZone } from './content/zones';
 import { CODEX, getCodex, validateContent } from './content/codex';
 import { validateQuestions, QUESTION_COUNT } from './content/questions';
 import type { Interactable } from './world/World';
-import { CHARIOT_DECK_HEIGHT, type Chariot } from './vehicles/Chariot';
+import { type Chariot } from './vehicles/Chariot';
 import type { ChallengeSpec, Zone } from './content/types';
 import type { ObjectiveRow } from './story/StoryEngine';
 
@@ -679,7 +679,7 @@ class Game {
     }
   }
 
-  /** Drive the chariot the player is standing in. */
+  /** Drive the chariot or horse the player is riding. */
   private updateVehicle(dt: number): void {
     const chariot = this.ridingChariot;
     if (!chariot) return;
@@ -697,15 +697,24 @@ class Game {
       this.player.yaw = approachAngle(this.player.yaw, chariot.yaw, rate);
     }
 
-    this.player.vehicle = { position: chariot.riderPosition, yaw: chariot.yaw, deckHeight: CHARIOT_DECK_HEIGHT };
+    this.player.vehicle = seatFor(chariot);
   }
 
   private mountChariot(chariot: Chariot): void {
     chariot.mount();
     this.ridingChariot = chariot;
-    this.player.vehicle = { position: chariot.riderPosition, yaw: chariot.yaw, deckHeight: CHARIOT_DECK_HEIGHT };
+    this.player.vehicle = seatFor(chariot);
     this.player.rig.reset();
-    this.hud.toast('info', 'Chariot', 'W/S throttle · A/D steer · Space brake · E to step down.', '🐎', 6000);
+    const horse = chariot.kind === 'horse';
+    this.hud.toast(
+      'info',
+      horse ? 'Horse' : 'Chariot',
+      horse
+        ? 'W/S to urge on and rein in · A/D turn · Space halt · E to dismount.'
+        : 'W/S throttle · A/D steer · Space brake · E to step down.',
+      '🐎',
+      6000,
+    );
   }
 
   private dismountChariot(): void {
@@ -755,7 +764,7 @@ class Game {
 
     // --- riding: the only interaction available is stepping down.
     if (this.ridingChariot) {
-      this.hud.setInteractPrompt('Step down from the chariot');
+      this.hud.setInteractPrompt(this.ridingChariot.kind === 'horse' ? 'Dismount' : 'Step down from the chariot');
       if (this.input.justPressed('interact') || this.input.justPressed('mount')) this.dismountChariot();
       const zone = this.world.zoneAt(this.player.position.x, this.player.position.z);
       if (zone && zone.id !== this.currentZone?.id) this.enterZone(zone, false);
@@ -779,12 +788,12 @@ class Game {
       return;
     }
 
-    // --- E to interact. A chariot you are standing next to wins, because that
-    // is almost always what you meant.
+    // --- E to interact. A chariot or horse you are standing next to wins,
+    // because that is almost always what you meant.
     const chariot = this.world.nearestChariot(this.player.focusPosition, 5.5);
     const near = this.world.nearestInteractable(this.player.focusPosition);
     if (chariot && !scanning) {
-      this.hud.setInteractPrompt('Ride the chariot');
+      this.hud.setInteractPrompt(chariot.kind === 'horse' ? 'Mount the horse' : 'Ride the chariot');
       if (this.input.justPressed('interact') || this.input.justPressed('mount')) this.mountChariot(chariot);
     } else if (near && !scanning) {
       this.hud.setInteractPrompt(near.label);
@@ -1327,8 +1336,13 @@ class Game {
 
     if (this.ridingChariot) {
       const kmh = Math.round(Math.abs(this.ridingChariot.speed) * 3.6);
+      const horse = this.ridingChariot.kind === 'horse';
       this.hud.setFlightHint(
-        `Chariot · <strong>${kmh} km/h</strong> · <strong>W/S</strong> throttle · <strong>A/D</strong> steer · <strong>Space</strong> brake · <strong>E</strong> to step down`,
+        `${horse ? 'Horse' : 'Chariot'} · <strong>${kmh} km/h</strong> · <strong>W/S</strong> ${
+          horse ? 'urge on' : 'throttle'
+        } · <strong>A/D</strong> ${horse ? 'turn' : 'steer'} · <strong>Space</strong> ${
+          horse ? 'halt' : 'brake'
+        } · <strong>E</strong> to ${horse ? 'dismount' : 'step down'}`,
       );
       return;
     }
@@ -1867,6 +1881,19 @@ function sliderRow(label: string, value: number, min: number, max: number, onCha
 }
 
 /** Rotate towards an angle the short way round. */
+/**
+ * The rider's seat on a vehicle, read fresh every frame: a horse's back rises
+ * with the gallop, so `deckHeight` is not a constant.
+ */
+function seatFor(vehicle: Chariot) {
+  return {
+    position: vehicle.riderPosition,
+    yaw: vehicle.yaw,
+    deckHeight: vehicle.deckHeight,
+    seat: vehicle.kind === 'horse' ? ('saddle' as const) : ('stand' as const),
+  };
+}
+
 function approachAngle(current: number, target: number, maxDelta: number): number {
   let diff = target - current;
   while (diff > Math.PI) diff -= Math.PI * 2;

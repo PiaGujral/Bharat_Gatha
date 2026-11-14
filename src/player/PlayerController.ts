@@ -81,8 +81,11 @@ export class PlayerController {
   readonly avatar = new PlayerAvatar();
   readonly rig: CameraRig;
 
-  /** Set while riding a chariot; the vehicle drives position and facing. */
-  vehicle: { position: THREE.Vector3; yaw: number; deckHeight: number } | null = null;
+  /**
+   * Set while riding; the vehicle drives position and facing. `seat` only
+   * changes the avatar's pose — you stand in a chariot and straddle a horse.
+   */
+  vehicle: { position: THREE.Vector3; yaw: number; deckHeight: number; seat?: 'stand' | 'saddle' } | null = null;
 
   /** Metres walked, for the report card. */
   distanceWalked = 0;
@@ -766,7 +769,7 @@ export class PlayerController {
   }
 
   private pose(horizontalSpeed: number): AvatarPose {
-    if (this.vehicle) return 'ride';
+    if (this.vehicle) return this.vehicle.seat === 'saddle' ? 'horse' : 'ride';
     switch (this.state) {
       case 'freefall':
         return 'fall';
