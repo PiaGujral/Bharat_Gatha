@@ -536,11 +536,16 @@ export class Duels {
       const near = Math.hypot(a.pos.x - player.x, a.pos.z - player.z) < 0.8 && Math.abs(a.pos.y - (player.y + 1.0)) < 1.2;
       const grounded = a.pos.y <= this.world.terrain.heightAt(a.pos.x, a.pos.z);
       if (near) {
-        this.hitPlayer();
-        this.drop(i);
-      } else if (grounded || a.life <= 0) {
-        this.drop(i);
-      }
+  this.hitPlayer();
+
+  // A lethal hit calls finish(), which clears every arrow.
+  // Only drop this arrow if it is still at the current index.
+  if (this.arrows[i] === a) {
+    this.drop(i);
+  }
+} else if (grounded || a.life <= 0) {
+  this.drop(i);
+}
     }
   }
 
