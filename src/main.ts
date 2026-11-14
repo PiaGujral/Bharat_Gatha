@@ -657,25 +657,31 @@ class Game {
       return;
     }
     for (const [action, index] of [['slot1', 0], ['slot2', 1], ['slot3', 2], ['slot4', 3]] as const) {
-      if (this.input.justPressed(action) && this.tool !== index) {
-        this.tool = index;
-        this.showToolbelt();
-        audio.click();
-      }
+      if (this.input.justPressed(action)) this.selectTool(index);
     }
-    if (this.player.state === 'ground' && !this.ridingChariot) {
+    // Riding is no reason to be unarmed — a mounted archer is most of the point
+    // of a horse in these centuries. `state` is 'ground' while riding too, so
+    // the only question is whether this particular thing reaches from a saddle.
+    const slot = TOOLBELT[this.tool];
+    const usable = this.player.state === 'ground' && (!this.ridingChariot || (slot?.mounted ?? false));
+    if (usable) {
       const left = this.input.mouse.leftEdge;
       // Whichever melee weapon is in hand. Q always strikes, whatever you are
       // holding, and falls back to the hammer when that is the bow or the lens.
-      const melee = MELEE_FOR_TOOL[this.tool] ?? null;
+      const melee = slot?.melee ?? null;
       if (this.tool === 0 && left) {
         // From the chest, a little to the right, toward the crosshair.
         this.player.getForward(_aim);
         _from.copy(this.player.position).add(_up.set(0, 1.45, 0)).addScaledVector(_side.set(Math.cos(this.player.yaw), 0, -Math.sin(this.player.yaw)), 0.3);
         this.combat.shoot(_from, this.camera.position, _aim);
       } else if ((melee && left) || this.input.justPressed('ability')) {
-        this.player.getForward(_aim);
-        this.combat.strike(this.player.position, _aim, melee ?? 'hammer');
+        // Q with the bow or the lens in hand falls back to a hammer blow, which
+        // you cannot throw from a saddle.
+        const swung = melee ?? (this.ridingChariot ? null : 'hammer');
+        if (swung) {
+          this.player.getForward(_aim);
+          this.combat.strike(this.player.position, _aim, swung);
+        }
       }
     }
     if (this.input.justPressed('track')) {
@@ -697,6 +703,18 @@ class Game {
   private updateVehicle(dt: number): void {
     const chariot = this.ridingChariot;
     if (!chariot) return;
+
+    // Something moved the player off this vehicle without going through
+    // dismountChariot: being overwhelmed by the haze, or fast travel from the
+    // map. Both call `teleportTo`, which clears `player.vehicle` but knows
+    // nothing about `ridingChariot` — so without this the next line would seat
+    // the player straight back on a horse half an island away, undoing the
+    // rescue. Checking it here catches every such path, including later ones.
+    if (!this.player.vehicle) {
+      chariot.dismount();
+      this.ridingChariot = null;
+      return;
+    }
 
     const throttle = (this.input.pressed('forward') ? 1 : 0) + (this.input.pressed('back') ? -1 : 0);
     const steer = (this.input.pressed('right') ? 1 : 0) + (this.input.pressed('left') ? -1 : 0);
@@ -731,16 +749,52 @@ class Game {
     );
   }
 
+  /**
+   * Let go of the vehicle without stepping down onto the ground beside it —
+   * for when the player is about to be somewhere else entirely.
+   */
+  private leaveVehicle(): void {
+    if (!this.ridingChariot) return;
+    this.ridingChariot.dismount();
+    this.ridingChariot = null;
+    this.player.vehicle = null;
+  }
+
   private dismountChariot(): void {
     const chariot = this.ridingChariot;
     if (!chariot) return;
     chariot.dismount();
     this.ridingChariot = null;
     this.player.vehicle = null;
-    const spot = chariot.dismountPoint();
-    this.player.placeAt(new THREE.Vector3(spot.x, spot.y + 0.2, spot.z));
+    this.player.placeAt(this.stepDownSpot(chariot));
     this.player.yaw = chariot.yaw;
     this.player.rig.reset();
+  }
+
+  /**
+   * Somewhere clear to step down onto. The vehicle's own `dismountPoint` is
+   * always a fixed distance off its right-hand side, which is fine in open
+   * country and puts you inside a wall when you pull up beside one. Walk round
+   * the vehicle instead and take the first spot that is out of the water, off
+   * the rocks, and not inside anything.
+   */
+  private stepDownSpot(chariot: Chariot): THREE.Vector3 {
+    const terrain = this.world.terrain;
+    for (const turn of [0, 1, -1, 2, -2, 3, -3, 4]) {
+      const angle = chariot.yaw + Math.PI / 2 + (turn * Math.PI) / 4;
+      for (const dist of [2.6, 3.4, 4.2]) {
+        const x = chariot.position.x + Math.cos(angle) * dist;
+        const z = chariot.position.z - Math.sin(angle) * dist;
+        const y = terrain.heightAt(x, z);
+        if (y <= SEA_LEVEL + 0.4) continue;
+        // A spot you would immediately be pushed out of is not a spot.
+        if (this.world.collision.resolve(x, y, z, 0.42, 1.8, 0.68).blocked) continue;
+        return new THREE.Vector3(x, y + 0.2, z);
+      }
+    }
+    // Boxed in on every side. Step off where the vehicle itself is standing:
+    // it drove in, so it fits, and a player is narrower than a cart.
+    return new THREE.Vector3(chariot.position.x, chariot.position.y + 0.2, chariot.position.z);
   }
 
   private updateInteraction(dt: number): void {
@@ -806,7 +860,11 @@ class Game {
     // because that is almost always what you meant.
     const chariot = this.world.nearestChariot(this.player.focusPosition, 5.5);
     const near = this.world.nearestInteractable(this.player.focusPosition);
-    if (chariot && !scanning) {
+    // You have to have your feet on the ground to climb aboard. Without this
+    // you can mount from mid-glide, which teleports you out of the canopy and
+    // onto the deck.
+    const canMount = chariot && !scanning && this.player.state === 'ground';
+    if (canMount) {
       this.hud.setInteractPrompt(chariot.kind === 'horse' ? 'Mount the horse' : 'Ride the chariot');
       if (this.input.justPressed('interact') || this.input.justPressed('mount')) this.mountChariot(chariot);
     } else if (near && !scanning) {
@@ -1680,21 +1738,39 @@ class Game {
     this.bank.setClassQuestions(list);
   }
 
+  /**
+   * Put something in the player's hands, and say so out loud.
+   *
+   * Switching always worked; nothing told you it had. The only feedback was a
+   * highlight moving between four small squares at the bottom of the screen,
+   * which is why "I can't switch weapons" was a perfectly reasonable thing to
+   * conclude. Now the name and what it does come up as a card, each slot has
+   * its own note, and the figure's hands visibly change. Pressing the key for
+   * the thing you are already holding re-announces it instead of doing
+   * nothing, so no key ever feels dead.
+   */
+  private selectTool(index: number): void {
+    const slot = TOOLBELT[index];
+    if (!slot) return;
+    const changed = this.tool !== index;
+    this.tool = index;
+    this.showToolbelt();
+    if (changed) audio.pluck(slot.note, 0.26);
+    else audio.click();
+    this.hud.toast('info', slot.name, slot.how, slot.icon, changed ? 2600 : 1800);
+  }
+
   private showToolbelt(): void {
     this.hud.setToolbelt(
-      [
-        { key: '1', icon: '🏹', name: 'Gandiva — the bow: left click to shoot' },
-        { key: '2', icon: '🔨', name: 'Shilpa hammer: left click (or Q) to strike' },
-        { key: '3', icon: '🔍', name: 'Pramana lens — scan a monument (hold right mouse)' },
-        { key: '4', icon: '⚔️', name: 'Khanda — the sword: left click (or Q) to cut. Longer reach than the hammer, and twice the bite.' },
-      ],
+      TOOLBELT.map((t) => ({ key: t.key, icon: t.icon, name: `${t.name} — ${t.how}` })),
       this.tool,
     );
-    this.player.avatar.setHeld(HELD_FOR_TOOL[this.tool] ?? 'none');
+    this.player.avatar.setHeld(TOOLBELT[this.tool]?.held ?? 'none');
   }
 
   /** Set down at the region's landing terrace, at full strength. Nothing is lost. */
   private overwhelmed(): void {
+    this.leaveVehicle();
     const zone = this.currentZone ?? this.world.zoneAt(this.player.position.x, this.player.position.z);
     const pad = zone ? this.world.padFor(zone.id) : undefined;
     if (pad) this.player.teleportTo(pad.position.x + 6, pad.position.z + 6);
@@ -1789,6 +1865,7 @@ class Game {
   private travelTo(zoneId: string): void {
     const zone = getZone(zoneId);
     if (!zone) return;
+    this.leaveVehicle();
     const pad = this.world.padFor(zone.id);
     const target = pad ? pad.position : new THREE.Vector3(zone.center[0], 0, zone.center[1]);
     this.player.teleportTo(target.x, target.z + 14);
@@ -1869,11 +1946,29 @@ const SOURCE_NOTE_TEXT: Record<string, string> = {
 };
 
 
-/** Tool slot to the thing the figure is seen carrying. */
-const HELD_FOR_TOOL: Record<number, HeldItem> = { 0: 'bow', 1: 'hammer', 2: 'lens', 3: 'sword' };
-
-/** Tool slot to the weapon a strike swings, for the slots that have one. */
-const MELEE_FOR_TOOL: Record<number, MeleeWeapon> = { 1: 'hammer', 3: 'sword' };
+/**
+ * The toolbelt: one row per slot, and the single place that knows what each
+ * slot is called, what it looks like in the hand, what it does and whether you
+ * can use it from the saddle. It used to be three separate tables that had to
+ * be kept in step by hand.
+ */
+const TOOLBELT: ReadonlyArray<{
+  key: string;
+  icon: string;
+  name: string;
+  how: string;
+  held: HeldItem;
+  melee?: MeleeWeapon;
+  /** Can it be used from horseback? A mason's hammer cannot. */
+  mounted: boolean;
+  /** The note its selection sounds, so the four are audibly different. */
+  note: number;
+}> = [
+  { key: '1', icon: '🏹', name: 'Gandiva, the bow', how: 'Left click to loose an arrow. Works from the saddle.', held: 'bow', mounted: true, note: 294 },
+  { key: '2', icon: '🔨', name: 'The Shilpa hammer', how: 'Left click, or Q, to strike. Needs both feet on the ground.', held: 'hammer', melee: 'hammer', mounted: false, note: 196 },
+  { key: '3', icon: '🔍', name: 'The Pramana lens', how: 'Hold the right mouse button on a monument to read it.', held: 'lens', mounted: true, note: 392 },
+  { key: '4', icon: '⚔️', name: 'The khanda', how: 'Left click, or Q, to cut. Longer reach than the hammer, and it works from the saddle.', held: 'sword', melee: 'sword', mounted: true, note: 247 },
+];
 
 const CONTROLS: Array<[string, string[]]> = [
   ['Move', ['W', 'A', 'S', 'D']],
