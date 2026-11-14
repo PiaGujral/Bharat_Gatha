@@ -5,6 +5,7 @@ import { Coach } from './ui/Coach';
 import { cloud } from './net/Cloud';
 import { presentClassPanel } from './ui/ClassPanel';
 import { Combat, PLAYER_HEARTS, type MeleeWeapon } from './combat/Combat';
+import { Duels, DUEL_STAMINA, type Duelist } from './combat/Duel';
 import { chapterProgress, journeyAction, nextAction, type NextAction, type NextTarget } from './story/Progress';
 import { hasSeenIntro, presentHowToPlay } from './ui/HowToPlay';
 import { VOICE_SAMPLE } from './content/story/sabha';
@@ -123,6 +124,7 @@ class Game {
   /** Heading of the opening flight, so the craft faces where it is going. */
   private rideHeading = 0;
   private ridingChariot: Chariot | null = null;
+  private duels!: Duels;
   /** Who we have already met, so a second conversation opens somewhere new. */
   private readonly spokenTo = new Set<string>();
   private scanTarget: string | null = null;
@@ -318,6 +320,16 @@ class Game {
     });
     this.combat.setEnabled(save.settings.combat);
     this.scene.add(this.combat.group);
+
+    // The sparring grounds. Teachers register themselves as things an arrow or
+    // a blade can reach; nobody else on the island ever does.
+    this.duels = new Duels(this.world, {
+      onPlayerHit: () => this.hud.setHearts(this.duels.playerStamina, DUEL_STAMINA, true),
+      onScore: () => this.hud.setHearts(this.duels.playerStamina, DUEL_STAMINA, true),
+      onEnded: (duelist, won) => this.endBout(duelist, won),
+    });
+    this.duels.spawn(save.profile.worldSeed, ZONES.map((z) => z.id));
+    for (const d of this.duels.duelists) this.combat.addTarget(d);
 
     // Letters hidden around the island.
     this.aksharas = new Aksharas(this.world, save.profile.creative.aksharas);
@@ -567,6 +579,7 @@ class Game {
     {
       const flying = this.player.state !== 'ground' && this.player.state !== 'climb' && this.player.state !== 'swim';
       this.combat.update(dt, this.elapsed, this.player.position, blocked || this.dialogue.isOpen || flying);
+      this.duels.update(dt, this.player.position, blocked || this.dialogue.isOpen || flying);
       this.hud.setHearts(this.combat.hearts, PLAYER_HEARTS, this.combat.enabled && (this.combat.engaged || this.combat.hearts < PLAYER_HEARTS));
     }
     this.labels.setVisible(!blocked || this.dialogue.isOpen);
@@ -753,6 +766,13 @@ class Game {
    * Let go of the vehicle without stepping down onto the ground beside it —
    * for when the player is about to be somewhere else entirely.
    */
+  private endBoutOnTeleport(): void {
+    if (!this.duels?.active) return;
+    this.duels.abandon();
+    this.hud.setFlightHint(null);
+    this.hud.setHearts(this.combat.hearts, PLAYER_HEARTS, false);
+  }
+
   private leaveVehicle(): void {
     if (!this.ridingChariot) return;
     this.ridingChariot.dismount();
@@ -853,6 +873,29 @@ class Game {
     if (pillar) {
       this.hud.setInteractPrompt(this.pillars.promptFor(pillar));
       if (this.input.justPressed('interact')) this.pillars.strike(pillar);
+      return;
+    }
+
+    // --- a bout in progress owns the prompt: the only thing to say is how to
+    // stop, and how it is going.
+    if (this.duels.active) {
+      const d = this.duels.active;
+      this.hud.setInteractPrompt('Yield');
+      if (this.input.justPressed('interact')) {
+        this.duels.abandon();
+        this.hud.toast('info', 'You step back', `${d.tradition.teacher} lowers the blade and waits.`, '🙏', 3000);
+      }
+      this.hud.setFlightHint(
+        `<strong>${d.tradition.art}</strong> · they have <strong>${d.stamina}</strong> left, you have <strong>${this.duels.playerStamina}</strong> · <strong>1</strong> bow, <strong>4</strong> sword · <strong>E</strong> to yield`,
+      );
+      return;
+    }
+
+    // --- a teacher standing at a sparring ground will take a bout if asked.
+    const teacher = this.duels.nearest(this.player.focusPosition);
+    if (teacher && !scanning && this.player.state === 'ground') {
+      this.hud.setInteractPrompt(`Spar with ${teacher.tradition.teacher} · ${teacher.tradition.art}`);
+      if (this.input.justPressed('interact')) this.beginBout(teacher);
       return;
     }
 
@@ -1768,9 +1811,42 @@ class Game {
     this.player.avatar.setHeld(TOOLBELT[this.tool]?.held ?? 'none');
   }
 
+  /**
+   * Take up a teacher's offer of a bout.
+   *
+   * Hearts become bout stamina for the duration: the haze is not involved, so
+   * losing costs you the bout and nothing else — no terrace, no setback, just
+   * a teacher telling you what you did wrong.
+   */
+  private beginBout(teacher: Duelist): void {
+    this.duels.challenge(teacher);
+    this.hud.setHearts(DUEL_STAMINA, DUEL_STAMINA, true);
+    this.hud.toast(
+      'info',
+      `${teacher.tradition.art} — a bout`,
+      `${teacher.tradition.teacher} salutes and takes a stance. ${teacher.tradition.home}. Bow with 1, khanda with 4. Press E to yield.`,
+      '⚔️',
+      7000,
+    );
+  }
+
+  private endBout(teacher: Duelist, won: boolean): void {
+    const t = teacher.tradition;
+    this.hud.setFlightHint(null);
+    this.hud.setHearts(this.combat.hearts, PLAYER_HEARTS, false);
+    if (won) {
+      save.addVidya(25);
+      bus.emit('vidya:gain', { amount: 25, reason: `A bout with ${t.teacher}` });
+      this.hud.toast('good', `${t.teacher} yields`, t.taught, '🏅', 12000);
+    } else {
+      this.hud.toast('info', `${t.teacher} wins the bout`, t.rebuke, '🙏', 12000);
+    }
+  }
+
   /** Set down at the region's landing terrace, at full strength. Nothing is lost. */
   private overwhelmed(): void {
     this.leaveVehicle();
+    this.endBoutOnTeleport();
     const zone = this.currentZone ?? this.world.zoneAt(this.player.position.x, this.player.position.z);
     const pad = zone ? this.world.padFor(zone.id) : undefined;
     if (pad) this.player.teleportTo(pad.position.x + 6, pad.position.z + 6);
@@ -1866,6 +1942,7 @@ class Game {
     const zone = getZone(zoneId);
     if (!zone) return;
     this.leaveVehicle();
+    this.endBoutOnTeleport();
     const pad = this.world.padFor(zone.id);
     const target = pad ? pad.position : new THREE.Vector3(zone.center[0], 0, zone.center[1]);
     this.player.teleportTo(target.x, target.z + 14);

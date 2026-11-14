@@ -78,6 +78,27 @@ interface Arrow {
   stuck: boolean;
 }
 
+/**
+ * Something other than a shade that an arrow or a blade can reach.
+ *
+ * The haze's shades are built into this file. A sparring partner is not, and
+ * should not be — they are a different idea with different rules. Rather than
+ * teach this file about them, anything that wants to be hittable registers
+ * itself here and says what to do about it. Villagers never register, which is
+ * why an arrow still passes them by.
+ */
+export interface ArrowTarget {
+  /**
+   * What an arrow actually has to reach — the middle of the body, not the feet.
+   * An arrow leaves the player's bow at chest height and flies nearly flat, so
+   * a sphere sitting on the ground is a sphere it sails over.
+   */
+  readonly center: THREE.Vector3;
+  readonly radius: number;
+  /** Return true if the hit counted, false to let the shot pass through. */
+  takeHit(amount: number, from: THREE.Vector3): boolean;
+}
+
 export interface CombatEvents {
   /** A shade was dispersed. */
   onDefeat?: (zoneId: string, siteCleared: boolean) => void;
@@ -97,6 +118,7 @@ export class Combat {
   engaged = false;
 
   private readonly sites: Site[] = [];
+  private readonly targets: ArrowTarget[] = [];
 
   /** Where the haze columns stand, so other things can be placed clear of them. */
   sitePositions(): THREE.Vector3[] {
@@ -198,6 +220,16 @@ export class Combat {
     }
   }
 
+  /** Make something hittable by the player's bow and blade until it is removed. */
+  addTarget(t: ArrowTarget): void {
+    if (!this.targets.includes(t)) this.targets.push(t);
+  }
+
+  removeTarget(t: ArrowTarget): void {
+    const i = this.targets.indexOf(t);
+    if (i >= 0) this.targets.splice(i, 1);
+  }
+
   // ------------------------------------------------------------- attacks
 
   /**
@@ -213,6 +245,10 @@ export class Combat {
     if (hit) dist = Math.min(dist, hit.distance);
     for (const s of this.activeShades()) {
       const t = rayToSphere(aimOrigin, aimDir, s.pos, 1.1, 0.75);
+      if (t !== null && t < dist) dist = t;
+    }
+    for (const g of this.targets) {
+      const t = rayToSphere(aimOrigin, aimDir, g.center, g.radius, 0.75);
       if (t !== null && t < dist) dist = t;
     }
     const target = this.v.copy(aimOrigin).addScaledVector(aimDir, dist);
@@ -247,6 +283,14 @@ export class Combat {
       if (d > 0.6 && this.v.normalize().dot(this.w.set(facing.x, 0, facing.z).normalize()) < m.arc) continue;
       this.damage(s, m.damage, this.w.set(facing.x, 0, facing.z).normalize(), m.push);
       any = true;
+    }
+    for (const g of this.targets) {
+      this.v.copy(g.center).sub(at);
+      this.v.y = 0;
+      const d = this.v.length();
+      if (d > m.range + g.radius) continue;
+      if (d > 0.6 && this.v.normalize().dot(this.w.set(facing.x, 0, facing.z).normalize()) < m.arc) continue;
+      if (g.takeHit(m.damage, at)) any = true;
     }
     return any;
   }
@@ -457,6 +501,19 @@ export class Combat {
             audio.arrowHit(true);
             struck = true;
             break;
+          }
+        }
+        // Then anything that has asked to be hittable — a sparring partner who
+        // agreed to the bout. Villagers never register, so an arrow still
+        // passes them by.
+        if (!struck) {
+          for (const g of this.targets) {
+            const t = rayToSphere(a.pos, dir, g.center, g.radius, 0.7);
+            if (t !== null && t <= move && g.takeHit(1, a.pos)) {
+              audio.arrowHit(true);
+              struck = true;
+              break;
+            }
           }
         }
       }
