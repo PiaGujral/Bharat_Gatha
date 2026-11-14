@@ -144,9 +144,10 @@ function pages(): Page[] {
             'Do things',
             [
               ['Talk, read, start a challenge, press a button', keys('E')],
-              ['Choose the bow, the hammer or the lens', keys('1', '2', '3')],
+              ['Choose the bow, the hammer, the lens or the sword', keys('1', '2', '3', '4')],
               ['Shoot an arrow (bow in hand)', keys('Left click')],
-              ['Strike close up', keys('Q')],
+              ['Cut or strike (sword or hammer in hand)', keys('Left click')],
+              ['Strike close up, whatever you are holding', keys('Q')],
               ['Scan a monument', keys('Right mouse (hold)')],
               ['Get on or off a chariot or a horse', keys('R')],
               ['Drive a chariot, ride a horse', keys('W', 'S', 'A', 'D')],

@@ -4,7 +4,7 @@ import { Waypoint } from './ui/Waypoint';
 import { Coach } from './ui/Coach';
 import { cloud } from './net/Cloud';
 import { presentClassPanel } from './ui/ClassPanel';
-import { Combat, PLAYER_HEARTS } from './combat/Combat';
+import { Combat, PLAYER_HEARTS, type MeleeWeapon } from './combat/Combat';
 import { chapterProgress, journeyAction, nextAction, type NextAction, type NextTarget } from './story/Progress';
 import { hasSeenIntro, presentHowToPlay } from './ui/HowToPlay';
 import { VOICE_SAMPLE } from './content/story/sabha';
@@ -59,6 +59,7 @@ import { CODEX, getCodex, validateContent } from './content/codex';
 import { validateQuestions, QUESTION_COUNT } from './content/questions';
 import type { Interactable } from './world/World';
 import { type Chariot } from './vehicles/Chariot';
+import type { HeldItem } from './player/PlayerAvatar';
 import type { ChallengeSpec, Zone } from './content/types';
 import type { ObjectiveRow } from './story/StoryEngine';
 
@@ -149,7 +150,7 @@ class Game {
   private peacocks!: Peacocks;
   /** Set by P; the frame is captured right after it has been rendered. */
   private photoPending = false;
-  /** Which tool is in hand: 0 the bow, 1 the Shilpa hammer, 2 the Pramana lens. */
+  /** Which tool is in hand: 0 the bow, 1 the Shilpa hammer, 2 the Pramana lens, 3 the khanda. */
   private tool = 2;
 
   constructor(private readonly viewport: HTMLElement) {
@@ -654,7 +655,7 @@ class Game {
       this.openHelp();
       return;
     }
-    for (const [action, index] of [['slot1', 0], ['slot2', 1], ['slot3', 2]] as const) {
+    for (const [action, index] of [['slot1', 0], ['slot2', 1], ['slot3', 2], ['slot4', 3]] as const) {
       if (this.input.justPressed(action) && this.tool !== index) {
         this.tool = index;
         this.showToolbelt();
@@ -663,14 +664,17 @@ class Game {
     }
     if (this.player.state === 'ground' && !this.ridingChariot) {
       const left = this.input.mouse.leftEdge;
+      // Whichever melee weapon is in hand. Q always strikes, whatever you are
+      // holding, and falls back to the hammer when that is the bow or the lens.
+      const melee = MELEE_FOR_TOOL[this.tool] ?? null;
       if (this.tool === 0 && left) {
         // From the chest, a little to the right, toward the crosshair.
         this.player.getForward(_aim);
         _from.copy(this.player.position).add(_up.set(0, 1.45, 0)).addScaledVector(_side.set(Math.cos(this.player.yaw), 0, -Math.sin(this.player.yaw)), 0.3);
         this.combat.shoot(_from, this.camera.position, _aim);
-      } else if ((this.tool === 1 && left) || this.input.justPressed('ability')) {
+      } else if ((melee && left) || this.input.justPressed('ability')) {
         this.player.getForward(_aim);
-        this.combat.strike(this.player.position, _aim);
+        this.combat.strike(this.player.position, _aim, melee ?? 'hammer');
       }
     }
     if (this.input.justPressed('track')) {
@@ -1665,9 +1669,11 @@ class Game {
         { key: '1', icon: '🏹', name: 'Gandiva — the bow: left click to shoot' },
         { key: '2', icon: '🔨', name: 'Shilpa hammer: left click (or Q) to strike' },
         { key: '3', icon: '🔍', name: 'Pramana lens — scan a monument (hold right mouse)' },
+        { key: '4', icon: '⚔️', name: 'Khanda — the sword: left click (or Q) to cut. Longer reach than the hammer, and twice the bite.' },
       ],
       this.tool,
     );
+    this.player.avatar.setHeld(HELD_FOR_TOOL[this.tool] ?? 'none');
   }
 
   /** Set down at the region's landing terrace, at full strength. Nothing is lost. */
@@ -1846,6 +1852,12 @@ const SOURCE_NOTE_TEXT: Record<string, string> = {
 };
 
 
+/** Tool slot to the thing the figure is seen carrying. */
+const HELD_FOR_TOOL: Record<number, HeldItem> = { 0: 'bow', 1: 'hammer', 2: 'lens', 3: 'sword' };
+
+/** Tool slot to the weapon a strike swings, for the slots that have one. */
+const MELEE_FOR_TOOL: Record<number, MeleeWeapon> = { 1: 'hammer', 3: 'sword' };
+
 const CONTROLS: Array<[string, string[]]> = [
   ['Move', ['W', 'A', 'S', 'D']],
   ['Sprint', ['Shift']],
@@ -1861,6 +1873,8 @@ const CONTROLS: Array<[string, string[]]> = [
   ['Photograph and postcard', ['P']],
   ['Pause and settings', ['Esc']],
   ['This help', ['F1']],
+  ['Bow, hammer, lens, sword', ['1', '2', '3', '4']],
+  ['Strike with what is in hand', ['Q']],
   ['Answer a question', ['1', '2', '3', '4']],
   ['Continue', ['Enter']],
 ];

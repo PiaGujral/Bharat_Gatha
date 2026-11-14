@@ -13,6 +13,9 @@ import { stoneMaterial, shade } from '../world/Materials';
 
 export type AvatarPose = 'idle' | 'walk' | 'run' | 'jump' | 'fall' | 'glide' | 'swim' | 'ride' | 'horse' | 'climb';
 
+/** What the figure is carrying, so a weapon swap is something you can see. */
+export type HeldItem = 'none' | 'bow' | 'hammer' | 'sword' | 'lens';
+
 const SKIN = 0x9a6b42;
 const CLOTH = 0xe8863a;
 const CLOTH_DARK = 0xb9552a;
@@ -28,6 +31,9 @@ export class PlayerAvatar {
   private readonly legL: THREE.Group;
   private readonly legR: THREE.Group;
   private readonly canopy: THREE.Mesh;
+  /** One mesh per carried thing, parented to a hand; only one is ever visible. */
+  private readonly carried = new Map<HeldItem, THREE.Mesh>();
+  private held: HeldItem = 'none';
 
   private phase = 0;
   private bend = 0;
@@ -83,6 +89,17 @@ export class PlayerAvatar {
     this.legR = this.makeLeg(1);
     this.group.add(this.armL, this.armR, this.legL, this.legR);
 
+    // Things in hand. The bow goes in the left, as a bow does; everything you
+    // swing or point goes in the right. Each hangs from the wrist at y = -0.78,
+    // which is where makeArm puts the hand.
+    // Everything is built flat in XY, which is the plane facing the camera in
+    // third person, and then tipped out from the body: held straight down the
+    // side, a thing this size disappears into the silhouette.
+    this.carry('bow', buildBow(), this.armL, 0.3, -1);
+    this.carry('hammer', buildHammer(), this.armR, -0.3, 1, 1.2);
+    this.carry('sword', buildSword(), this.armR, -0.35, 1, 1.3);
+    this.carry('lens', buildLens(), this.armR, -0.3, 1);
+
     // --- the glider canopy, shown only while gliding.
     const canopyKit = new Kit();
     canopyKit.lathe(
@@ -103,6 +120,33 @@ export class PlayerAvatar {
     this.canopy.position.set(0, 3.5, 0);
     this.canopy.visible = false;
     this.group.add(this.canopy);
+  }
+
+  /**
+   * Show one carried item and hide the rest. Cheap enough to call every frame,
+   * but it early-outs so the common case costs a comparison.
+   */
+  setHeld(item: HeldItem): void {
+    if (item === this.held) return;
+    this.held = item;
+    for (const [kind, mesh] of this.carried) mesh.visible = kind === item;
+  }
+
+  /**
+   * @param lean  roll in radians: negative tips the top away from the body on
+   *              the right, positive does the same on the left.
+   * @param side  +1 for the right hand, -1 for the left.
+   * @param scale a nudge for things that would otherwise read as a smudge.
+   */
+  private carry(kind: HeldItem, geometry: THREE.BufferGeometry, hand: THREE.Group, lean: number, side: number, scale = 1): void {
+    const mesh = new THREE.Mesh(geometry, stoneMaterial());
+    mesh.position.set(side * 0.05, -0.78, 0.05);
+    mesh.rotation.z = lean;
+    if (scale !== 1) mesh.scale.setScalar(scale);
+    mesh.castShadow = true;
+    mesh.visible = false;
+    hand.add(mesh);
+    this.carried.set(kind, mesh);
   }
 
   private makeArm(side: number): THREE.Group {
@@ -286,4 +330,65 @@ function lerp(a: number, b: number, t: number): number {
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+// ---------------------------------------------------------------- carried kit
+//
+// Each is built around the wrist: +Y runs back up the forearm, so a thing held
+// upright points away from the ground when the arm hangs by the side.
+
+const WOOD = 0x9a7142;
+const STEEL = 0xc9d2da;
+
+/** Gandiva: a recurve stave, strung. Held in the left hand. */
+function buildBow(): THREE.BufferGeometry {
+  const k = new Kit();
+  const N = 7;
+  const SPAN = 1.0;
+  const DEPTH = 0.18;
+  for (let i = 0; i < N; i++) {
+    const t = (i / (N - 1)) * 2 - 1;
+    // The belly bows away from the string and meets it again at each tip.
+    k.box([0.04, SPAN / (N - 1) + 0.03, 0.055], [-DEPTH * (1 - t * t), t * SPAN * 0.5, 0], i === 3 ? shade(WOOD, 1.25) : WOOD, {
+      rotZ: -t * 0.5,
+      collide: false,
+    });
+  }
+  k.box([0.016, SPAN, 0.016], [0, 0, 0], 0xe8dcc0, { collide: false });
+  return k.build().geometry;
+}
+
+/** The Shilpa hammer: a maker's tool, carried head-up. */
+function buildHammer(): THREE.BufferGeometry {
+  const k = new Kit();
+  k.box([0.048, 0.52, 0.048], [0, 0.15, 0], WOOD, { collide: false });
+  k.box([0.17, 0.14, 0.15], [0, 0.47, 0], 0x6e7177, { collide: false });
+  k.box([0.07, 0.07, 0.24], [0, 0.47, -0.02], 0x55585e, { collide: false });
+  return k.build().geometry;
+}
+
+/**
+ * A khanda: straight, broad, blunt-tipped, with a basket hilt — the sword of
+ * these centuries, not a European longsword. Carried point-up by the side.
+ */
+function buildSword(): THREE.BufferGeometry {
+  const GOLD = 0xb08a3e;
+  const k = new Kit();
+  k.box([0.055, 0.22, 0.055], [0, 0, 0], 0x3a2b1c, { collide: false });
+  k.box([0.085, 0.055, 0.085], [0, -0.14, 0], GOLD, { collide: false });
+  k.box([0.06, 0.16, 0.06], [0, -0.21, 0], GOLD, { rotX: -0.4, collide: false });
+  k.box([0.3, 0.05, 0.08], [0, 0.14, 0], GOLD, { collide: false });
+  k.box([0.11, 0.58, 0.03], [0, 0.46, 0], STEEL, { collide: false });
+  k.box([0.11, 0.12, 0.034], [0, 0.2, 0], shade(STEEL, 0.78), { collide: false });
+  k.box([0.06, 0.1, 0.024], [0, 0.79, 0], STEEL, { collide: false });
+  return k.build().geometry;
+}
+
+/** The Pramana lens: a glass in a brass ring. */
+function buildLens(): THREE.BufferGeometry {
+  const k = new Kit();
+  k.box([0.038, 0.2, 0.038], [0, 0.04, 0], WOOD, { collide: false });
+  k.torus(0.1, 0.02, [0, 0.24, 0], 0xb08a3e, { segments: 14, collide: false });
+  k.cylinder(0.095, 0.095, 0.012, [0, 0.24, 0], 0x9fd8ef, { segments: 12, rotX: Math.PI / 2, collide: false });
+  return k.build().geometry;
 }

@@ -11,7 +11,7 @@ import { SEA_LEVEL } from '../world/Terrain';
  *
  * The haze in this story makes history simple. Out in the open country of every region it gathers into
  * shades: grey, faceless raiders that come at you when you near their haze column. You drive them off with
- * the bow (left click) or a close strike (Q, or left click with the Shilpa hammer). They dissolve when
+ * the bow (left click) or a close strike (Q, or left click with the hammer or the khanda). They dissolve when
  * beaten. The people of the island are never targets: an arrow that reaches one of them clatters harmlessly
  * to the ground and they tell you to mind your aim.
  *
@@ -29,8 +29,18 @@ const LEASH = 70;
 const ARROW_SPEED = 68;
 const ARROW_GRAVITY = 9.8;
 const BOW_COOLDOWN = 0.45;
-const STRIKE_COOLDOWN = 0.55;
-const STRIKE_RANGE = 2.6;
+
+/** What you are swinging. */
+export type MeleeWeapon = 'hammer' | 'sword';
+
+const MELEE: Record<MeleeWeapon, { range: number; cooldown: number; damage: number; arc: number; push: number }> = {
+  // A maker's tool pressed into a fight: short, slow, blunt. `arc` is the
+  // narrowest dot product with your facing that still counts as in front.
+  hammer: { range: 2.6, cooldown: 0.55, damage: 1, arc: 0.25, push: 1.1 },
+  // A khanda has reach and an edge, and sweeps wider than you can swing a
+  // hammer. Two hits put a shade down instead of three.
+  sword: { range: 3.5, cooldown: 0.38, damage: 2, arc: 0.05, push: 1.4 },
+};
 const REGROW_SECONDS = 600;
 export const PLAYER_HEARTS = 5;
 
@@ -220,29 +230,32 @@ export class Combat {
   }
 
   /** A close strike in front of the player. Returns true if anything was hit. */
-  strike(at: THREE.Vector3, facing: THREE.Vector3): boolean {
+  strike(at: THREE.Vector3, facing: THREE.Vector3, weapon: MeleeWeapon = 'hammer'): boolean {
     if (!this.enabled || this.strikeCooldown > 0) return false;
-    this.strikeCooldown = STRIKE_COOLDOWN;
+    const m = MELEE[weapon];
+    this.strikeCooldown = m.cooldown;
     audio.swing();
+    // Steel rings; a hammer thuds. Same swing, one note of difference.
+    if (weapon === 'sword') audio.pluck(1046, 0.12);
     let any = false;
     for (const s of this.activeShades()) {
       this.v.copy(s.pos).sub(at);
       this.v.y = 0;
       const d = this.v.length();
-      if (d > STRIKE_RANGE) continue;
+      if (d > m.range) continue;
       // In front of the player, in a wide arc.
-      if (d > 0.6 && this.v.normalize().dot(this.w.set(facing.x, 0, facing.z).normalize()) < 0.25) continue;
-      this.damage(s, 1, this.w.set(facing.x, 0, facing.z).normalize());
+      if (d > 0.6 && this.v.normalize().dot(this.w.set(facing.x, 0, facing.z).normalize()) < m.arc) continue;
+      this.damage(s, m.damage, this.w.set(facing.x, 0, facing.z).normalize(), m.push);
       any = true;
     }
     return any;
   }
 
-  private damage(s: Shade, amount: number, push: THREE.Vector3): void {
+  private damage(s: Shade, amount: number, push: THREE.Vector3, force = 1.1): void {
     if (s.state === 'gone') return;
     s.hp -= amount;
     s.flash = 0.18;
-    s.pos.addScaledVector(push, 1.1);
+    s.pos.addScaledVector(push, force);
     if (s.state === 'windup') {
       // A hit breaks the swing.
       s.state = 'recover';
