@@ -7,9 +7,10 @@
 import { buildSync } from 'esbuild';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const root = resolve(new URL('..', import.meta.url).pathname);
+// fileURLToPath, not URL.pathname: pathname gives "/C:/..." on Windows and keeps %20 for spaces.
+const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const tmp = join(root, 'scripts/.tmp');
 mkdirSync(tmp, { recursive: true });
 const out = join(tmp, 'content.mjs');

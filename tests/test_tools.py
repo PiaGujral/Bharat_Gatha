@@ -10,7 +10,7 @@ from tools import content_report, learning_report
 def test_content_report_builds_and_has_the_sections(tmp_path):
     out = tmp_path / "r.md"
     assert content_report.main(["--out", str(out)]) == 0
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     for heading in ["# Content report", "## Questions by region", "## Skills the questions train", "## Codex entries above the target reading grade"]:
         assert heading in text
     assert "Sindhu" in text
@@ -47,7 +47,7 @@ def test_learning_report_reads_exported_files(tmp_path):
     assert learning_report.main([str(tmp_path), "--csv", str(csv_path), "--markdown", str(md_path)]) == 0
     lines = csv_path.read_text(encoding="utf-8-sig").splitlines()
     assert len(lines) == 3 and lines[1].startswith("Kid0,100,") and lines[2].startswith("Kid1,400,")
-    assert "Average Vidya: **250**" in md_path.read_text()
+    assert "Average Vidya: **250**" in md_path.read_text(encoding="utf-8")
     assert learning_report.main([str(tmp_path / "nothing")]) == 1
 
 
@@ -86,7 +86,7 @@ def test_fix_options_refuses_bad_fixes():
     problems = fix_options.apply({"no-such-question": ["a", "b"]}, write=False)
     assert problems and "no-such-question" in problems[0]
     qid = "sindhu-meluhha"
-    n = len(fix_options.locate((fix_options.ROOT / "src/content/questions/ancient.ts").read_text(), qid)[2])
+    n = len(fix_options.locate((fix_options.ROOT / "src/content/questions/ancient.ts").read_text(encoding="utf-8"), qid)[2])
     assert fix_options.apply({qid: ["only one"]}, write=False)  # wrong count
     assert fix_options.apply({qid: ["same"] * n}, write=False)  # duplicates
 
@@ -109,11 +109,13 @@ def test_exported_content_matches_the_game_source():
 
     from server.content import CONTENT_PATH
 
-    if not shutil.which("npm") or not (fix_options_root() / "node_modules").exists():
+    # shutil.which finds npm.cmd on Windows, which subprocess cannot find by the bare name "npm".
+    npm = shutil.which("npm")
+    if not npm or not (fix_options_root() / "node_modules").exists():
         pytest.skip("needs node and npm install")
     before = CONTENT_PATH.read_bytes()
     try:
-        subprocess.run(["npm", "run", "-s", "content:export"], cwd=fix_options_root(), check=True, capture_output=True)
+        subprocess.run([npm, "run", "-s", "content:export"], cwd=fix_options_root(), check=True, capture_output=True)
         assert CONTENT_PATH.read_bytes() == before, "run `npm run content:export` and commit server/data/content.json"
     finally:
         CONTENT_PATH.write_bytes(before)

@@ -327,6 +327,8 @@ class Game {
       onPlayerHit: () => this.hud.setHearts(this.duels.playerStamina, DUEL_STAMINA, true),
       onScore: () => this.hud.setHearts(this.duels.playerStamina, DUEL_STAMINA, true),
       onEnded: (duelist, won) => this.endBout(duelist, won),
+      onWalkedAway: (duelist) =>
+        this.hud.toast('info', 'The bout is off', `You walked away, so ${duelist.tradition.teacher} lowers the blade.`, '🙏', 3000),
     });
     this.duels.spawn(save.profile.worldSeed, ZONES.map((z) => z.id));
     for (const d of this.duels.duelists) this.combat.addTarget(d);
@@ -580,7 +582,10 @@ class Game {
       const flying = this.player.state !== 'ground' && this.player.state !== 'climb' && this.player.state !== 'swim';
       this.combat.update(dt, this.elapsed, this.player.position, blocked || this.dialogue.isOpen || flying);
       this.duels.update(dt, this.player.position, blocked || this.dialogue.isOpen || flying);
-      this.hud.setHearts(this.combat.hearts, PLAYER_HEARTS, this.combat.enabled && (this.combat.engaged || this.combat.hearts < PLAYER_HEARTS));
+      // During a bout the hearts are bout stamina. Without this branch the haze hearts were written over them
+      // every frame, so the score of a bout never showed.
+      if (this.duels.active) this.hud.setHearts(this.duels.playerStamina, DUEL_STAMINA, true);
+      else this.hud.setHearts(this.combat.hearts, PLAYER_HEARTS, this.combat.enabled && (this.combat.engaged || this.combat.hearts < PLAYER_HEARTS));
     }
     this.labels.setVisible(!blocked || this.dialogue.isOpen);
     this.labels.update(this.world.npcView, this.camera, (id) => this.npcMark(id), this.viewport.clientWidth, this.viewport.clientHeight);
@@ -878,6 +883,10 @@ class Game {
 
     // --- a bout in progress owns the prompt: the only thing to say is how to
     // stop, and how it is going.
+    if (this.duels.active && !this.combat.enabled) {
+      // Combat was switched off in settings mid-bout: the bow and blade no longer do anything, so call it off.
+      this.endBoutOnTeleport();
+    }
     if (this.duels.active) {
       const d = this.duels.active;
       this.hud.setInteractPrompt('Yield');
@@ -885,14 +894,13 @@ class Game {
         this.duels.abandon();
         this.hud.toast('info', 'You step back', `${d.tradition.teacher} lowers the blade and waits.`, '🙏', 3000);
       }
-      this.hud.setFlightHint(
-        `<strong>${d.tradition.art}</strong> · they have <strong>${d.stamina}</strong> left, you have <strong>${this.duels.playerStamina}</strong> · <strong>1</strong> bow, <strong>4</strong> sword · <strong>E</strong> to yield`,
-      );
+      // The bout's status line is drawn in updateHud(), which runs after this and owns the flight hint.
       return;
     }
 
     // --- a teacher standing at a sparring ground will take a bout if asked.
-    const teacher = this.duels.nearest(this.player.focusPosition);
+    // Only with combat switched on: with it off the bow and blade do nothing, and a bout could never be won.
+    const teacher = this.combat.enabled ? this.duels.nearest(this.player.focusPosition) : null;
     if (teacher && !scanning && this.player.state === 'ground') {
       this.hud.setInteractPrompt(`Spar with ${teacher.tradition.teacher} · ${teacher.tradition.art}`);
       if (this.input.justPressed('interact')) this.beginBout(teacher);
@@ -1329,7 +1337,7 @@ class Game {
    */
   private updateScoreIntensity(): void {
     let want = 0;
-    if (this.combat.engaged) want = 1;
+    if (this.combat.engaged || this.duels?.active) want = 1;
     else if (this.ridingChariot) want = Math.min(0.62, Math.abs(this.ridingChariot.speed) / 24);
     else if (this.player.state === 'vimana' || this.player.state === 'glide') want = 0.45;
     audio.setMusicIntensity(want);
@@ -1529,6 +1537,16 @@ class Game {
         } · <strong>A/D</strong> ${horse ? 'turn' : 'steer'} · <strong>Space</strong> ${
           horse ? 'halt' : 'brake'
         } · <strong>E</strong> to ${horse ? 'dismount' : 'step down'}`,
+      );
+      return;
+    }
+
+    // A bout in progress: how it stands. This used to be set in updateInteraction(), and the switch below
+    // then cleared it on the same frame, so it never appeared.
+    const bout = this.duels.active;
+    if (bout) {
+      this.hud.setFlightHint(
+        `<strong>${bout.tradition.art}</strong> · they have <strong>${bout.stamina}</strong> left, you have <strong>${this.duels.playerStamina}</strong> · <strong>1</strong> bow, <strong>4</strong> sword · <strong>E</strong> to yield`,
       );
       return;
     }

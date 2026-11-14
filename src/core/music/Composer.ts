@@ -98,11 +98,16 @@ export class Composer {
    * nothing should start drumming over the menu.
    */
   private mode(): 'alap' | 'gat' {
-    const { alapBars, gatBars } = this.theme;
+    const { gatBars } = this.theme;
     if (gatBars === 0) return 'alap';
-    const alap = Math.round(alapBars * (1 - this.intensity));
+    const alap = this.alapLength();
     if (alap <= 0) return 'gat';
     return this.index % (alap + gatBars) < alap ? 'alap' : 'gat';
+  }
+
+  /** How many bars of alap open each block at the current intensity. `gat()` must use the same figure as `mode()`. */
+  private alapLength(): number {
+    return Math.round(this.theme.alapBars * (1 - this.intensity));
   }
 
   /** The pulse for this bar. Laya lifts under pressure, but never past a sprint. */
@@ -272,8 +277,13 @@ export class Composer {
     const beat = 60 / this.bpm();
     const duration = matras * beat;
     const events: ScoreEvent[] = [];
-    const blockBar = (this.index - th.alapBars) % (th.alapBars + th.gatBars);
-    const lastOfBlock = (this.index % (th.alapBars + th.gatBars)) === th.alapBars + th.gatBars - 1;
+    // Where this bar sits in its block, using the alap length mode() used. With the full theme.alapBars here,
+    // a shortened alap put the bell and the closing Sa on the wrong bars (and blockBar could go negative).
+    const alap = Math.max(0, this.alapLength());
+    const cycle = alap + th.gatBars;
+    const pos = this.index % cycle;
+    const blockBar = pos - alap;
+    const lastOfBlock = pos === cycle - 1;
 
     this.tanpura(events, duration);
     if (this.index % 2 === 0) this.padChord(events, 0, duration * 2 + 0.5);

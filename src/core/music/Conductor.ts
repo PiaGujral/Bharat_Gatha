@@ -110,7 +110,6 @@ export class Conductor {
     };
   }
 
-  /** Schedule everything due before `until`. Called by a timer in play and in one go offline. */
   /**
    * How hard the music should be pushing, 0 to 1. Set it as often as you like;
    * the conductor eases towards it rather than jumping. It rises quickly and
@@ -121,6 +120,7 @@ export class Conductor {
     this.intensityTarget = Math.max(0, Math.min(1, value));
   }
 
+  /** Schedule everything due before `until`. Called by a timer in play and in one go offline. */
   pump(until: number): void {
     const s = this.current;
     // Ease towards the target. Driven off the audio clock, not frame time, so

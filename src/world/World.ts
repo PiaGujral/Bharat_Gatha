@@ -530,6 +530,42 @@ export class World {
     this.npcView = view;
   }
 
+  /**
+   * The first person a short straight segment passes through, judged by where they are standing right now.
+   *
+   * Anyone who wanders has no collider (the collision hash is static, so one would be an invisible wall left
+   * where they started), which meant arrows flew straight through almost everyone. Arrows ask this instead.
+   * `dir` must be normalised; the returned distance is along it.
+   */
+  npcOnSegment(origin: THREE.Vector3, dir: THREE.Vector3, length: number): { id: string; distance: number } | null {
+    const R = 0.4;
+    const H = 1.8;
+    const a = dir.x * dir.x + dir.z * dir.z;
+    let best: { id: string; distance: number } | null = null;
+    for (const e of this.npcEntries) {
+      const ox = origin.x - e.pos.x;
+      const oz = origin.z - e.pos.z;
+      const c = ox * ox + oz * oz - R * R;
+      if (c > (length + R) * (length + R)) continue;
+      let t: number;
+      if (c <= 0) {
+        t = 0;
+      } else {
+        if (a < 1e-9) continue;
+        const b = ox * dir.x + oz * dir.z;
+        const disc = b * b - a * c;
+        if (disc < 0) continue;
+        t = (-b - Math.sqrt(disc)) / a;
+        if (t < 0) continue;
+      }
+      if (t > length) continue;
+      const y = origin.y + dir.y * t;
+      if (y < e.pos.y || y > e.pos.y + H) continue;
+      if (!best || t < best.distance) best = { id: e.spec.id, distance: t };
+    }
+    return best;
+  }
+
   private actorEnvCache: ActorEnv | null = null;
 
   private actorEnv(): ActorEnv {

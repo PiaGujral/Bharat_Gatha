@@ -145,6 +145,8 @@ export interface DuelEvents {
   onPlayerHit?: () => void;
   /** The bout ended. `won` is from the player's point of view. */
   onEnded?: (duelist: Duelist, won: boolean) => void;
+  /** The player walked too far away and the teacher called the bout off. */
+  onWalkedAway?: (duelist: Duelist) => void;
   /** Somebody landed a hit; `theirs` tells you whose stamina moved. */
   onScore?: (duelist: Duelist) => void;
 }
@@ -181,7 +183,12 @@ export class Duelist implements ArrowTarget {
     this.yaw = yaw;
     this.circleDir = rng.bool() ? 1 : -1;
 
-    this.mat = stoneMaterial();
+    // Their own copy of the stone material. The hit flash below sets `emissive`, and stoneMaterial() is shared by
+    // every building on the island, so flashing the shared one lit up all the monuments at once. Keep the shared
+    // shader hook so they are weathered like everyone else (and reuse its compiled program).
+    const shared = stoneMaterial();
+    this.mat = shared.clone();
+    this.mat.onBeforeCompile = shared.onBeforeCompile;
     this.mesh = new THREE.Mesh(buildPerson(tradition.robe, rng), this.mat);
     this.mesh.castShadow = true;
     this.group.add(this.mesh);
@@ -196,6 +203,11 @@ export class Duelist implements ArrowTarget {
 
   get fighting(): boolean {
     return this.phase !== 'waiting' && this.phase !== 'yielded' && this.phase !== 'won';
+  }
+
+  /** Free to take a bout: not in one, and not still resting after the last. */
+  get ready(): boolean {
+    return this.phase === 'waiting';
   }
 
   /** ArrowTarget: the player's arrow or blade found them. */
@@ -357,6 +369,7 @@ export class Duelist implements ArrowTarget {
     this.group.traverse((o) => {
       if (o instanceof THREE.Mesh) o.geometry.dispose();
     });
+    this.mat.dispose();
   }
 }
 
@@ -375,6 +388,8 @@ export class Duels {
   private readonly arrowGeo: THREE.BufferGeometry;
   private readonly arrowMat: THREE.MeshStandardMaterial;
   private readonly v = new THREE.Vector3();
+  /** The pending "ready again" timers, so dispose() can cancel them. */
+  private readonly restTimers = new Set<number>();
 
   constructor(
     private readonly world: World,
@@ -420,11 +435,12 @@ export class Duels {
     return null;
   }
 
-  /** The teacher close enough to be spoken to, for the interact prompt. */
+  /** The teacher close enough to be spoken to, for the interact prompt. Teachers still resting after a bout are skipped. */
   nearest(point: THREE.Vector3, maxDistance = ENGAGE): Duelist | null {
     let best: Duelist | null = null;
     let bestD = maxDistance;
     for (const d of this.duelists) {
+      if (!d.ready) continue;
       const dist = Math.hypot(d.position.x - point.x, d.position.z - point.z);
       if (dist < bestD) {
         bestD = dist;
@@ -435,7 +451,9 @@ export class Duels {
   }
 
   challenge(d: Duelist): void {
-    if (this.active) return;
+    // Not while they are resting: the delayed reset() from the last bout would
+    // fire mid-bout, put them back to 'waiting', and leave a bout nobody can win.
+    if (this.active || !d.ready) return;
     this.active = d;
     this.playerStamina = STAMINA;
     this.lastStamina = STAMINA;
@@ -475,6 +493,7 @@ export class Duels {
     // you across a region for it.
     if (d.distanceFromHome(player) > LEASH) {
       this.abandon();
+      this.events.onWalkedAway?.(d);
       return;
     }
 
@@ -554,10 +573,16 @@ export class Duels {
     audio.conch();
     this.events.onEnded?.(d, won);
     // They are ready to go again once you have had a moment with the lesson.
-    window.setTimeout(() => d.reset(), 9000);
+    const id = window.setTimeout(() => {
+      this.restTimers.delete(id);
+      d.reset();
+    }, 9000);
+    this.restTimers.add(id);
   }
 
   dispose(): void {
+    for (const id of this.restTimers) window.clearTimeout(id);
+    this.restTimers.clear();
     this.clearArrows();
     for (const d of this.duelists) d.dispose();
     this.duelists.length = 0;

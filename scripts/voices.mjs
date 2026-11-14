@@ -12,10 +12,11 @@
 import { buildSync } from 'esbuild';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { basename, extname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-const root = resolve(new URL('..', import.meta.url).pathname);
+// fileURLToPath, not URL.pathname: pathname gives "/C:/..." on Windows and keeps %20 for spaces.
+const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const REGISTRY = join(root, 'src/content/voice/registry.json');
 const PUBLIC = join(root, 'public/voices');
 const DOCS = join(root, 'docs/voice');

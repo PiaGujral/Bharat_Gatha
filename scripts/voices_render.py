@@ -144,10 +144,12 @@ def main() -> int:
     manifest_path = out / "manifest.json"
     clips = {}
     if manifest_path.exists():
-        clips = json.load(open(manifest_path)).get("clips", {})
+        clips = json.loads(manifest_path.read_text(encoding="utf-8")).get("clips", {})
 
     def save() -> None:
-        json.dump({"version": 1, "voice": cast["label"], "clips": clips}, open(manifest_path, "w"), indent=1)
+        # Close the file each time, so the manifest on disk is complete even if a later clip fails.
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "voice": cast["label"], "clips": clips}, f, indent=1)
 
     for n, row in enumerate(rows, 1):
         key = row["key"]

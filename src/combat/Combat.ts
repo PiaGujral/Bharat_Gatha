@@ -76,6 +76,8 @@ interface Arrow {
   vel: THREE.Vector3;
   life: number;
   stuck: boolean;
+  /** Already bounced off a person, so it falls rather than striking anyone else. */
+  glanced?: boolean;
 }
 
 /**
@@ -236,6 +238,24 @@ export class Combat {
    * Loose an arrow from `from` toward wherever the crosshair is pointing. `aim` is the camera's position
    * and forward direction, so the arrow lands where the player is looking even in third person.
    */
+  /** Roughly where a ray first goes below the terrain, within `max` metres, or null. Coarse steps are plenty for aiming. */
+  private groundAlong(origin: THREE.Vector3, dir: THREE.Vector3, max: number): number | null {
+    if (dir.y >= 0) return null;
+    const terrain = this.world.terrain;
+    let prev = 0;
+    for (let t = 1.5; t <= max; t += 1.5) {
+      const y = origin.y + dir.y * t;
+      if (y <= terrain.heightAt(origin.x + dir.x * t, origin.z + dir.z * t)) {
+        // Halve back once for a closer answer.
+        const mid = (prev + t) / 2;
+        const my = origin.y + dir.y * mid;
+        return my <= terrain.heightAt(origin.x + dir.x * mid, origin.z + dir.z * mid) ? mid : t;
+      }
+      prev = t;
+    }
+    return null;
+  }
+
   shoot(from: THREE.Vector3, aimOrigin: THREE.Vector3, aimDir: THREE.Vector3): boolean {
     if (!this.enabled || this.bowCooldown > 0) return false;
     this.bowCooldown = BOW_COOLDOWN;
@@ -251,6 +271,13 @@ export class Combat {
       const t = rayToSphere(aimOrigin, aimDir, g.center, g.radius, 0.75);
       if (t !== null && t < dist) dist = t;
     }
+    // People and the ground are not in the collision boxes (walkers have no collider; terrain is a heightfield),
+    // so without these a crosshair on someone or on the ground nearby was read as "160 m away", and the lift
+    // added for that range sent the arrow over their head.
+    const person = this.world.npcOnSegment(aimOrigin, aimDir, dist);
+    if (person) dist = Math.min(dist, person.distance);
+    const ground = this.groundAlong(aimOrigin, aimDir, dist);
+    if (ground !== null) dist = Math.min(dist, ground);
     const target = this.v.copy(aimOrigin).addScaledVector(aimDir, dist);
     const dir = this.w.copy(target).sub(from).normalize();
     // A touch of lift so a long shot arcs onto the crosshair rather than dropping short.
@@ -525,11 +552,24 @@ export class Combat {
 
       // Then the world: walls, the ground.
       const hit = this.world.collision.raycast(a.pos.x, a.pos.y, a.pos.z, dir.x, dir.y, dir.z, move);
+      // People, by where they stand now. Most of them walk and so have no collider; without this an arrow
+      // passed through all but the few who stand still, and they never told you to mind your aim.
+      const person = a.glanced ? null : this.world.npcOnSegment(a.pos, dir, move);
+      if (person && (!hit || person.distance < hit.distance)) {
+        a.pos.addScaledVector(dir, Math.max(0, person.distance - 0.3));
+        a.glanced = true;
+        this.events.onNpcStruck?.(person.id);
+        a.vel.set(-dir.x * 2, 2, -dir.z * 2);
+        a.life = Math.min(a.life, 2.5);
+        a.mesh.position.copy(a.pos);
+        continue;
+      }
       if (hit && hit.distance <= move) {
         a.pos.addScaledVector(dir, Math.max(0, hit.distance - 0.3));
         const tag = hit.box.tag;
         if (tag && tag.startsWith('npc:')) {
           // A person: the arrow glances off and falls, and they let you know about it.
+          a.glanced = true;
           this.events.onNpcStruck?.(tag.slice(4));
           a.vel.set(-dir.x * 2, 2, -dir.z * 2);
           a.life = Math.min(a.life, 2.5);
